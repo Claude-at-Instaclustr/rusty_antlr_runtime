@@ -1,11 +1,11 @@
 //! General AST
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::borrow::Borrow;
 
 use std::fmt::{Debug, Formatter};
 use std::iter::from_fn;
 use std::marker::PhantomData;
-use std::ops::{CoerceUnsized, Deref};
+use std::ops::{Deref};
 use std::rc::Rc;
 
 use crate::atn::INVALID_ALT;
@@ -80,6 +80,7 @@ pub trait ParseTree<'input>: Tree<'input> {
     }
 }
 
+
 /// text of the node.
 /// Already implemented for all rule contexts
 pub trait NodeText {
@@ -87,13 +88,14 @@ pub trait NodeText {
     /// rule name for context nodes and token text for terminal nodes
     fn get_node_text(&self, rule_names: &[&str]) -> String;
 }
+/*
 
 impl<T> NodeText for T {
-    default fn get_node_text(&self, _rule_names: &[&str]) -> String { "<unknown>".to_owned() }
+    /*default*/ fn get_node_text(&self, _rule_names: &[&str]) -> String { "<unknown>".to_owned() }
 }
 
 impl<'input, T: CustomRuleContext<'input>> NodeText for T {
-    default fn get_node_text(&self, rule_names: &[&str]) -> String {
+    /*default*/ fn get_node_text(&self, rule_names: &[&str]) -> String {
         let rule_index = self.get_rule_index();
         let rule_name = rule_names[rule_index];
         let alt_number = self.get_alt_number();
@@ -103,7 +105,7 @@ impl<'input, T: CustomRuleContext<'input>> NodeText for T {
         return rule_name.to_owned();
     }
 }
-
+*/
 #[doc(hidden)]
 #[derive(Tid, Debug)]
 pub struct NoError;
@@ -126,9 +128,12 @@ impl<'input, Node: ParserNodeType<'input>, T: 'static> CustomRuleContext<'input>
     type TF = Node::TF;
     type Ctx = Node;
 
-    fn get_rule_index(&self) -> usize { usize::max_value() }
+    fn get_rule_index(&self) -> usize { usize::MAX }
 }
-
+/*
+impl<'input, Node: ParserNodeType<'input> + TidAble<'input>, T: 'static + TidAble<'input>> Tid<'input> for LeafNode<'input, Node, T> {
+}
+*/
 impl<'input, Node: ParserNodeType<'input> + TidAble<'input>, T: 'static + TidAble<'input>>
     ParserRuleContext<'input> for LeafNode<'input, Node, T>
 {
@@ -311,9 +316,9 @@ where
 {
     /// Walks recursively over tree `t` with `listener`
     pub fn walk<Listener, Ctx>(mut listener: Box<Listener>, t: &Ctx) -> Box<Listener>
-    where
+    /*where
         for<'x> &'x mut Listener: CoerceUnsized<&'x mut T>,
-        for<'x> &'x Ctx: CoerceUnsized<&'x Node::Type>,
+        for<'x> &'x Ctx: CoerceUnsized<&'x Node::Type>,*/
     {
         // let mut listener = listener as Box<T>;
         Self::walk_inner(listener.as_mut(), t as &Node::Type);

@@ -10,7 +10,7 @@ use crate::atn::INVALID_ALT;
 use crate::parser::ParserNodeType;
 use crate::parser_rule_context::ParserRuleContext;
 use crate::token_factory::TokenFactory;
-use crate::tree::{ParseTree, Tree};
+use crate::tree::{NodeText, ParseTree, Tree};
 use better_any::{Tid, TidAble};
 use std::any::type_name;
 
@@ -205,6 +205,9 @@ impl<'input, ExtCtx: CustomRuleContext<'input>> Debug for BaseRuleContext<'input
     }
 }
 
+impl<'input, ExtCtx: CustomRuleContext<'input>> NodeText for BaseRuleContext<'input, ExtCtx> {
+    fn get_node_text(&self, _rule_names: &[&str]) -> String { "<unknown>".to_owned() }
+}
 impl<'input, ExtCtx: CustomRuleContext<'input>> Tree<'input> for BaseRuleContext<'input, ExtCtx> {}
 
 impl<'input, ExtCtx: CustomRuleContext<'input>> ParseTree<'input>

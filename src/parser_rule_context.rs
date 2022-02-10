@@ -3,7 +3,7 @@ use std::any::{type_name, Any};
 use std::borrow::{Borrow, BorrowMut};
 use std::cell::{Ref, RefCell, RefMut};
 use std::fmt::{Debug, Error, Formatter};
-use std::ops::{CoerceUnsized, Deref, DerefMut};
+use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
 use better_any::{Tid, TidAble, TidExt};
@@ -14,7 +14,7 @@ use crate::parser::ParserNodeType;
 use crate::rule_context::{BaseRuleContext, CustomRuleContext, RuleContext};
 use crate::token::Token;
 use crate::token_factory::TokenFactory;
-use crate::tree::{ParseTree, ParseTreeVisitor, TerminalNode, Tree, VisitableDyn};
+use crate::tree::{NodeText, ParseTree, ParseTreeVisitor, TerminalNode, Tree, VisitableDyn};
 
 /// Syntax tree node for particular parser rule.
 ///
@@ -125,7 +125,7 @@ pub trait RuleContextExt<'input>: ParserRuleContext<'input> {
     where
         Z: ParserRuleContext<'input, Ctx = Self::Ctx, TF = Self::TF> + ?Sized + 'input,
         Self::Ctx: ParserNodeType<'input, Type = Z>,
-        Rc<Self>: CoerceUnsized<Rc<Z>>;
+        /*Rc<Self>: CoerceUnsized<Rc<Z>>*/;
 
     #[doc(hidden)]
     fn accept_children<V>(&self, visitor: &mut V)
@@ -139,9 +139,11 @@ impl<'input, T: ParserRuleContext<'input> + ?Sized + 'input> RuleContextExt<'inp
     where
         Z: ParserRuleContext<'input, Ctx = T::Ctx, TF = T::TF> + ?Sized + 'input,
         T::Ctx: ParserNodeType<'input, Type = Z>,
-        Rc<T>: CoerceUnsized<Rc<Z>>,
+        /*Rc<T>: CoerceUnsized<Rc<Z>>,*/
     {
         let mut result = String::from("[");
+        self.
+        let x = self.clone_into()
         let mut next: Option<Rc<Z>> = Some(self.clone() as Rc<Z>);
         while let Some(ref p) = next {
             if stop.is_some() && (stop.is_none() || Rc::ptr_eq(p, stop.as_ref().unwrap())) {
@@ -156,11 +158,9 @@ impl<'input, T: ParserRuleContext<'input> + ?Sized + 'input> RuleContextExt<'inp
                     .unwrap_or_else(|| rule_index.to_string());
                 result.extend(rule_name.chars());
                 result.push(' ');
-            } else {
-                if !p.is_empty() {
-                    result.extend(p.get_invoking_state().to_string().chars());
-                    result.push(' ');
-                }
+            } else if !p.is_empty() {
+                result.extend(p.get_invoking_state().to_string().chars());
+                result.push(' ');
             }
 
             next = p.get_parent().clone();
@@ -238,9 +238,12 @@ pub struct BaseParserRuleContext<'input, Ctx: CustomRuleContext<'input>> {
     /// List of children of current node
     pub(crate) children: RefCell<Vec<Rc<<Ctx::Ctx as ParserNodeType<'input>>::Type>>>,
 }
+impl<'input, Ctx: CustomRuleContext<'input>> NodeText for BaseParserRuleContext<'input, Ctx> {
+    fn get_node_text(&self, _rule_names: &[&str]) -> String { "<unknown>".to_owned() }
+}
 
 impl<'input, Ctx: CustomRuleContext<'input>> Debug for BaseParserRuleContext<'input, Ctx> {
-    default fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+    /*default*/ fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         f.write_str(type_name::<Self>())
     }
 }
@@ -411,7 +414,7 @@ impl<'input, Ctx: CustomRuleContext<'input> + TidAble<'input>> ParseTree<'input>
         }
     }
 
-    default fn get_text(&self) -> String {
+    /*default*/ fn get_text(&self) -> String {
         let children = self.get_children();
         let mut result = String::new();
 
@@ -470,7 +473,7 @@ pub trait DerefSeal: Deref {}
 
 impl<'input, T, I> ParserRuleContext<'input> for T
 where
-    T: DerefSeal<Target = I> + 'input + Debug + Tid<'input>,
+    T: DerefSeal<Target = I> + 'input + Debug + Tid<'input> + NodeText,
     I: ParserRuleContext<'input> + 'input + ?Sized,
 {
     fn set_exception(&self, e: ANTLRError) { self.deref().set_exception(e) }
@@ -546,17 +549,24 @@ where
 
 impl<'input, T, I> ParseTree<'input> for T
 where
-    T: DerefSeal<Target = I> + 'input + Debug + Tid<'input>,
+    T: DerefSeal<Target = I> + 'input + Debug + Tid<'input> + NodeText,
     I: ParserRuleContext<'input> + 'input + ?Sized,
 {
     fn get_source_interval(&self) -> Interval { self.deref().get_source_interval() }
 
     fn get_text(&self) -> String { self.deref().get_text() }
 }
-
+/*
+impl<'input, T, I> NodeText for T where
+    T: DerefSeal<Target = I> + 'input + Debug + Tid<'input>,
+    I: ParserRuleContext<'input> + 'input + ?Sized,
+{
+    fn get_node_text(&self, _rule_names: &[&str]) -> String { "<unknown>".to_owned() }
+}
+*/
 impl<'input, T, I> Tree<'input> for T
 where
-    T: DerefSeal<Target = I> + 'input + Debug + Tid<'input>,
+    T: DerefSeal<Target = I> + 'input + Debug + Tid<'input> + NodeText,
     I: ParserRuleContext<'input> + 'input + ?Sized,
 {
     fn get_parent(&self) -> Option<Rc<<I::Ctx as ParserNodeType<'input>>::Type>> {
@@ -584,6 +594,7 @@ where
 
     // fn get_children_full(&self) -> &RefCell<Vec<Rc<<I::Ctx as ParserNodeType<'input>>::Type>>> { self.deref().get_children_full() }
 }
+
 
 impl<'input, T, I> CustomRuleContext<'input> for T
 where

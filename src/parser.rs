@@ -2,7 +2,7 @@
 use std::borrow::Borrow;
 use std::cell::{Cell, RefCell};
 use std::marker::PhantomData;
-use std::ops::{CoerceUnsized, Deref, DerefMut};
+use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -223,8 +223,8 @@ where
     Ctx: ParserNodeType<'input, TF = I::TF>,
     T: ParseTreeListener<'input, Ctx> + ?Sized,
     Ctx::Type: Listenable<T>,
-    Rc<TerminalNode<'input, Ctx>>: CoerceUnsized<Rc<Ctx::Type>>,
-    Rc<ErrorNode<'input, Ctx>>: CoerceUnsized<Rc<Ctx::Type>>,
+    /*Rc<TerminalNode<'input, Ctx>>: CoerceUnsized<Rc<Ctx::Type>>,
+    Rc<ErrorNode<'input, Ctx>>: CoerceUnsized<Rc<Ctx::Type>>,*/
 {
     fn get_interpreter(&self) -> &ParserATNSimulator { self.interp.as_ref() }
 
@@ -359,8 +359,8 @@ where
     Ctx: ParserNodeType<'input, TF = I::TF>,
     T: ParseTreeListener<'input, Ctx> + ?Sized,
     Ctx::Type: Listenable<T>,
-    Rc<TerminalNode<'input, Ctx>>: CoerceUnsized<Rc<Ctx::Type>>,
-    Rc<ErrorNode<'input, Ctx>>: CoerceUnsized<Rc<Ctx::Type>>,
+    /*Rc<TerminalNode<'input, Ctx>>: CoerceUnsized<Rc<Ctx::Type>>,
+    Rc<ErrorNode<'input, Ctx>>: CoerceUnsized<Rc<Ctx::Type>>,*/
 {
     pub fn new_base_parser(input: I, interpreter: Arc<ParserATNSimulator>, ext: Ext) -> Self {
         Self {
@@ -437,8 +437,8 @@ where
     /// ### Example for listener usage:
     /// todo
     pub fn add_parse_listener<L>(&mut self, listener: Box<L>) -> ListenerId<L>
-    where
-        Box<L>: CoerceUnsized<Box<T>>,
+/*    where
+        Box<L>: CoerceUnsized<Box<T>>,*/
     {
         let id = ListenerId::new(&listener);
         self.parse_listeners.push(listener);
@@ -448,8 +448,8 @@ where
     /// Removes parse listener with corresponding `listener_id`, casts it back to user type and returns it to the caller.
     /// `listener_id` is returned when listener is added via `add_parse_listener`
     pub fn remove_parse_listener<L>(&mut self, listener_id: ListenerId<L>) -> Box<L>
-    where
-        Box<L>: CoerceUnsized<Box<T>>,
+/*    where
+        Box<L>: CoerceUnsized<Box<T>>,*/
     {
         let index = self
             .parse_listeners

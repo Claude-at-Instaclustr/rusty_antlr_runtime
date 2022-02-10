@@ -385,7 +385,13 @@ impl PredictionContext {
                     parents,
                     return_states: vec![a.return_state, b.return_state],
                 };
-                if !result.return_states.is_sorted() {
+                let mut sorted = true;
+                let mut i =1;
+                while i<result.return_states.len() && sorted {
+                    sorted = result.return_states[i-1] < result.return_states[i];
+                    i += 1;
+                }
+                if !sorted {
                     result.parents.swap(0, 1);
                     result.return_states.swap(0, 1);
                 }
