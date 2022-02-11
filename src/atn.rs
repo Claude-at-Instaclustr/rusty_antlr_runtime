@@ -7,7 +7,7 @@ use crate::dfa::ScopeExt;
 use crate::interval_set::IntervalSet;
 use crate::lexer_action::LexerAction;
 use crate::ll1_analyzer::LL1Analyzer;
-use crate::parser::ParserNodeType;
+use crate::recognizer::RecogniserNodeType;
 use crate::rule_context::EmptyContextType;
 use crate::token::{TOKEN_EOF, TOKEN_EPSILON};
 use crate::token_factory::CommonTokenFactory;
@@ -84,7 +84,7 @@ impl ATN {
     /// If `ctx` is null, the set of tokens will not include what can follow
     /// the rule surrounding `s`. In other words, the set will be
     /// restricted to tokens reachable staying within `s`'s rule.
-    pub fn next_tokens_in_ctx<'a, Ctx: ParserNodeType<'a>>(
+    pub fn next_tokens_in_ctx<'a, Ctx: RecogniserNodeType<'a>>(
         &self,
         s: &dyn ATNState,
         _ctx: Option<&Ctx::Type>,

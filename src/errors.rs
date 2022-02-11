@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use crate::atn_simulator::IATNSimulator;
 use crate::interval_set::IntervalSet;
-use crate::parser::{Parser, ParserNodeType};
+use crate::recognizer::{RecogniserNodeType, Recognizer};
 use crate::rule_context::states_stack;
 use crate::token::{OwningToken, Token};
 use crate::transition::PredicateTransition;
@@ -24,15 +24,15 @@ pub enum ANTLRError {
     /// ```text
     /// ERROR_TOKEN: . ;
     /// ```
-    /// to prevent lexer from throwing errors and have all error handling in parser.
+    /// to prevent lexer from throwing errors and have all error handling in Recognizer.
     LexerNoAltError {
         /// Index at which error has happened
         start_index: isize,
     },
 
-    /// Indicates that the parser could not decide which of two or more paths
+    /// Indicates that the Recognizer could not decide which of two or more paths
     /// to take based upon the remaining input. It tracks the starting token
-    /// of the offending input and also knows where the parser was
+    /// of the offending input and also knows where the Recognizer was
     /// in the various paths when the error. Reported by reportNoViableAlternative()
     NoAltError(NoViableAltError),
 
@@ -47,16 +47,16 @@ pub enum ANTLRError {
     PredicateError(FailedPredicateError),
 
     /// Internal error. Or user provided type returned data that is
-    /// incompatible with current parser state
+    /// incompatible with current Recognizer state
     IllegalStateError(String),
 
-    /// Unrecoverable error. Indicates that error should not be processed by parser/error strategy
+    /// Unrecoverable error. Indicates that error should not be processed by Recognizer/error strategy
     /// and it should abort parsing and immediately return to caller.
     FallThrough(Rc<dyn Error>),
 
     /// Potentially recoverable error.
-    /// Used to allow user to emit his own errors from parser actions or from custom error strategy.
-    /// Parser will try to recover with provided `ErrorStrategy`
+    /// Used to allow user to emit his own errors from Recognizer actions or from custom error strategy.
+    /// Recognizer will try to recover with provided `ErrorStrategy`
     OtherError(Rc<dyn Error>),
 }
 
@@ -77,7 +77,9 @@ pub enum ANTLRError {
 // }
 
 impl Display for ANTLRError {
-    fn fmt(&self, _f: &mut Formatter<'_>) -> fmt::Result { <Self as Debug>::fmt(self, _f) }
+    fn fmt(&self, _f: &mut Formatter<'_>) -> fmt::Result {
+        <Self as Debug>::fmt(self, _f)
+    }
 }
 
 impl Error for ANTLRError {
@@ -91,7 +93,7 @@ impl Error for ANTLRError {
 }
 
 impl ANTLRError {
-    /// Returns first token that caused parser to fail.
+    /// Returns first token that caused Recognizer to fail.
     pub fn get_offending_token(&self) -> Option<&OwningToken> {
         Some(match self {
             ANTLRError::NoAltError(e) => &e.base.offending_token,
@@ -109,7 +111,7 @@ impl ANTLRError {
 //    }
 //}
 
-/// Common part of ANTLR parser errors
+/// Common part of ANTLR Recognizer errors
 #[derive(Debug, Clone)]
 #[allow(missing_docs)]
 pub struct BaseRecognitionError {
@@ -122,15 +124,15 @@ pub struct BaseRecognitionError {
 }
 
 impl BaseRecognitionError {
-    /// Returns tokens that were expected by parser in error place
-    pub fn get_expected_tokens<'a, T: Parser<'a>>(&self, recognizer: &T) -> IntervalSet {
+    /// Returns tokens that were expected by Recognizer in error place
+    pub fn get_expected_tokens<'a, T: Recognizer<'a>>(&self, recognizer: &T) -> IntervalSet {
         recognizer
             .get_interpreter()
             .atn()
             .get_expected_tokens(self.offending_state, self.states_stack.iter().copied())
     }
 
-    fn new<'a, T: Parser<'a>>(recog: &mut T) -> BaseRecognitionError {
+    fn new<'a, T: Recognizer<'a>>(recog: &mut T) -> BaseRecognitionError {
         BaseRecognitionError {
             message: "".to_string(),
             offending_token: recog.get_current_token().borrow().to_owned(),
@@ -153,7 +155,7 @@ pub struct NoViableAltError {
 
 #[allow(missing_docs)]
 impl NoViableAltError {
-    pub fn new<'a, T: Parser<'a>>(recog: &mut T) -> NoViableAltError {
+    pub fn new<'a, T: Recognizer<'a>>(recog: &mut T) -> NoViableAltError {
         Self {
             base: BaseRecognitionError {
                 message: "".to_string(),
@@ -166,7 +168,7 @@ impl NoViableAltError {
             //            ctx: recog.get_parser_rule_context().clone()
         }
     }
-    pub fn new_full<'a, T: Parser<'a>>(
+    pub fn new_full<'a, T: Recognizer<'a>>(
         recog: &mut T,
         start_token: OwningToken,
         offending_token: OwningToken,
@@ -193,16 +195,16 @@ pub struct InputMisMatchError {
 
 #[allow(missing_docs)]
 impl InputMisMatchError {
-    pub fn new<'a, T: Parser<'a>>(recognizer: &mut T) -> InputMisMatchError {
+    pub fn new<'a, T: Recognizer<'a>>(recognizer: &mut T) -> InputMisMatchError {
         InputMisMatchError {
             base: BaseRecognitionError::new(recognizer),
         }
     }
 
-    pub fn with_state<'a, T: Parser<'a>>(
+    pub fn with_state<'a, T: Recognizer<'a>>(
         recognizer: &mut T,
         offending_state: isize,
-        ctx: Rc<<T::Node as ParserNodeType<'a>>::Type>,
+        ctx: Rc<<T::Node as RecogniserNodeType<'a>>::Type>,
     ) -> InputMisMatchError {
         let mut a = Self::new(recognizer);
         // a.base.ctx = ctx;
@@ -212,7 +214,7 @@ impl InputMisMatchError {
     }
 }
 
-//fn new_input_mis_match_exception(recognizer: Parser) -> InputMisMatchError { unimplemented!() }
+//fn new_input_mis_match_exception(recognizer: Recognizer) -> InputMisMatchError { unimplemented!() }
 
 /// See `ANTLRError::PredicateError`
 #[derive(Debug, Clone)]
@@ -226,7 +228,7 @@ pub struct FailedPredicateError {
 
 #[allow(missing_docs)]
 impl FailedPredicateError {
-    pub fn new<'a, T: Parser<'a>>(
+    pub fn new<'a, T: Recognizer<'a>>(
         recog: &mut T,
         predicate: Option<String>,
         msg: Option<String>,

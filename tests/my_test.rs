@@ -20,7 +20,7 @@ mod gen {
     use antlr_rust::token_factory::{ArenaCommonFactory, OwningTokenFactory};
     use antlr_rust::token_stream::{TokenStream, UnbufferedTokenStream};
     use antlr_rust::tree::{
-        ParseTree, ParseTreeListener, ParseTreeVisitor, ParseTreeWalker, TerminalNode, Tree,
+        ParseTree, ParseTreeListener, ParseTreeVisitor, ParseTreeWalker, TerminalNode, Node,
         VisitChildren, Visitable,
     };
     use antlr_rust::InputStream;

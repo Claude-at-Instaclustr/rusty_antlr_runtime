@@ -5,6 +5,7 @@ use std::borrow::Borrow;
 use std::borrow::Cow::{self, Borrowed, Owned};
 use std::cmp::max;
 use std::fmt::Debug;
+use std::ops::Deref;
 
 use crate::dfa::ScopeExt;
 use crate::token::TOKEN_EOF;
@@ -18,12 +19,13 @@ pub trait Vocabulary: Sync + Debug {
 
 #[derive(Debug)]
 pub struct VocabularyImpl {
-    literal_names: Vec<Option<String>>,
-    symbolic_names: Vec<Option<String>>,
-    display_names: Vec<Option<String>>,
+    literal_names: &'static [&'static str],
+    symbolic_names: &'static [&'static str],
+    display_names: &'static [&'static str],
     max_token_type: isize,
 }
 
+/*
 fn collect_to_string<'b, T: Borrow<str> + 'b>(
     iter: impl IntoIterator<Item = &'b Option<T>>,
 ) -> Vec<Option<String>> {
@@ -31,18 +33,18 @@ fn collect_to_string<'b, T: Borrow<str> + 'b>(
         .map(|x| x.as_ref().map(|it| it.borrow().to_owned()))
         .collect()
 }
-
+*/
 impl VocabularyImpl {
     pub fn new<'b, T: Borrow<str> + 'b, Iter: IntoIterator<Item = &'b Option<T>>>(
-        literal_names: Iter,
-        symbolic_names: Iter,
-        display_names: Option<Iter>,
+        literal_names: &'static [&'static str],
+        symbolic_names: &'static [&'static str],
+        display_names: &'static [&'static str],
     ) -> VocabularyImpl {
         //        let display_names = display_names.unwrap_or(&[]);
         VocabularyImpl {
-            literal_names: collect_to_string(literal_names),
-            symbolic_names: collect_to_string(symbolic_names),
-            display_names: collect_to_string(display_names.into_iter().flatten()),
+            literal_names,
+            symbolic_names,
+            display_names,
             max_token_type: 0,
         }
         .modify_with(|it| {
@@ -54,6 +56,7 @@ impl VocabularyImpl {
         })
     }
 
+    /*
     pub fn from_token_names(token_names: &[Option<&str>]) -> VocabularyImpl {
         let token_names = collect_to_string(token_names.iter());
         let mut literal_names = token_names.clone();
@@ -83,31 +86,33 @@ impl VocabularyImpl {
             symbolic_names.iter(),
             Some(token_names.iter()),
         )
-    }
+    } */
 }
 
 impl Vocabulary for VocabularyImpl {
-    fn get_max_token_type(&self) -> isize { self.max_token_type }
-
-    fn get_literal_name(&self, token_type: isize) -> Option<&str> {
-        self.literal_names
-            .get(token_type as usize)
-            .and_then(|x| x.as_deref())
+    fn get_max_token_type(&self) -> isize {
+        self.max_token_type
     }
 
-    fn get_symbolic_name(&self, token_type: isize) -> Option<&str> {
+    fn get_literal_name(&self, token_type: isize) -> Option<&'static str> {
+        self.literal_names
+            .get(token_type as usize)
+            .and_then(|x| Option::from(*x))
+    }
+
+    fn get_symbolic_name(&self, token_type: isize) -> Option<&'static str> {
         if token_type == TOKEN_EOF {
             return Some("EOF");
         }
         self.symbolic_names
             .get(token_type as usize)
-            .and_then(|x| x.as_deref())
+            .and_then(|x| Option::from(*x))
     }
 
     fn get_display_name(&self, token_type: isize) -> Cow<'_, str> {
         self.display_names
             .get(token_type as usize)
-            .and_then(|x| x.as_deref())
+            .and_then(|x| Option::from(*x))
             .or_else(|| self.get_literal_name(token_type))
             .or_else(|| self.get_symbolic_name(token_type))
             .map(|x| Borrowed(x))
@@ -121,11 +126,19 @@ pub(crate) static DUMMY_VOCAB: DummyVocab = DummyVocab;
 pub(crate) struct DummyVocab;
 
 impl Vocabulary for DummyVocab {
-    fn get_max_token_type(&self) -> isize { unimplemented!() }
+    fn get_max_token_type(&self) -> isize {
+        unimplemented!()
+    }
 
-    fn get_literal_name(&self, _token_type: isize) -> Option<&str> { unimplemented!() }
+    fn get_literal_name(&self, _token_type: isize) -> Option<&str> {
+        unimplemented!()
+    }
 
-    fn get_symbolic_name(&self, _token_type: isize) -> Option<&str> { unimplemented!() }
+    fn get_symbolic_name(&self, _token_type: isize) -> Option<&str> {
+        unimplemented!()
+    }
 
-    fn get_display_name(&self, token_type: isize) -> Cow<'_, str> { token_type.to_string().into() }
+    fn get_display_name(&self, token_type: isize) -> Cow<'_, str> {
+        token_type.to_string().into()
+    }
 }

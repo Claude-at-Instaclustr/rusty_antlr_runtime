@@ -12,43 +12,42 @@ use crate::char_stream::{CharStream, InputData};
 use crate::dfa::ScopeExt;
 use crate::errors::{ANTLRError, FailedPredicateError, InputMisMatchError, NoViableAltError};
 use crate::interval_set::IntervalSet;
-use crate::parser::{Parser, ParserNodeType};
-use crate::parser_rule_context::ParserRuleContext;
+use crate::recognizer::{RecogniserNodeType, Recognizer};
 use crate::rule_context::{CustomRuleContext, RuleContext};
 use crate::token::{Token, TOKEN_DEFAULT_CHANNEL, TOKEN_EOF, TOKEN_EPSILON, TOKEN_INVALID_TYPE};
 use crate::token_factory::TokenFactory;
 use crate::transition::RuleTransition;
-use crate::tree::Tree;
+use crate::tree::Node;
 use crate::utils::escape_whitespaces;
 use better_any::{impl_tid, Tid, TidAble};
 
 /// The interface for defining strategies to deal with syntax errors encountered
 /// during a parse by ANTLR-generated parsers. We distinguish between three
 /// different kinds of errors:
-///  - The parser could not figure out which path to take in the ATN (none of
+///  - The Recognizer could not figure out which path to take in the ATN (none of
 /// the available alternatives could possibly match)
 ///  - The current input does not match what we were looking for
 ///  - A predicate evaluated to false
 ///
-/// Implementations of this interface should report syntax errors by calling [`Parser::notifyErrorListeners`]
+/// Implementations of this interface should report syntax errors by calling [`Recognizer::notifyErrorListeners`]
 ///
-/// [`Parser::notifyErrorListeners`]: crate::parser::Parser::notifyErrorListeners
-pub trait ErrorStrategy<'a, T: Parser<'a>>: Tid<'a> {
+/// [`Recognizer::notifyErrorListeners`]: crate::Recognizer::Recognizer::notifyErrorListeners
+pub trait ErrorStrategy<'a, T: Recognizer<'a>>: Tid<'a> {
     ///Reset the error handler state for the specified `recognizer`.
     fn reset(&mut self, recognizer: &mut T);
 
     /// This method is called when an unexpected symbol is encountered during an
-    /// inline match operation, such as `Parser::match`. If the error
+    /// inline match operation, such as `Recognizer::match`. If the error
     /// strategy successfully recovers from the match failure, this method
     /// returns the `Token` instance which should be treated as the
     /// successful result of the match.
     ///
     /// This method handles the consumption of any tokens - the caller should
-    /// **not** call `Parser::consume` after a successful recovery.
+    /// **not** call `Recognizer::consume` after a successful recovery.
     ///
     /// Note that the calling code will not report an error if this method
     /// returns successfully. The error strategy implementation is responsible
-    /// for calling `Parser::notifyErrorListeners` as appropriate.
+    /// for calling `Recognizer::notifyErrorListeners` as appropriate.
     ///
     /// Returns `ANTLRError` if can't recover from unexpected input symbol
     fn recover_inline(
@@ -73,7 +72,7 @@ pub trait ErrorStrategy<'a, T: Parser<'a>>: Tid<'a> {
     fn sync(&mut self, recognizer: &mut T) -> Result<(), ANTLRError>;
 
     /// Tests whether or not {@code recognizer} is in the process of recovering
-    /// from an error. In error recovery mode, `Parser::consume` will create
+    /// from an error. In error recovery mode, `Recognizer::consume` will create
     /// `ErrorNode` leaf instead of `TerminalNode` one  
     fn in_error_recovery_mode(&mut self, recognizer: &mut T) -> bool;
 
@@ -81,12 +80,12 @@ pub trait ErrorStrategy<'a, T: Parser<'a>>: Tid<'a> {
     /// the default exception handler generated for a rule method.
     fn report_error(&mut self, recognizer: &mut T, e: &ANTLRError);
 
-    /// This method is called when the parser successfully matches an input
+    /// This method is called when the Recognizer successfully matches an input
     /// symbol.
     fn report_match(&mut self, recognizer: &mut T);
 }
 //
-// impl<'a, T: Parser<'a>> Default for Box<dyn ErrorStrategy<'a, T> + 'a> {
+// impl<'a, T: Recognizer<'a>> Default for Box<dyn ErrorStrategy<'a, T> + 'a> {
 //     fn default() -> Self { Box::new(DefaultErrorStrategy::new()) }
 // }
 //
@@ -95,11 +94,15 @@ pub trait ErrorStrategy<'a, T: Parser<'a>>: Tid<'a> {
 // pub type DynHandler<'a, T> = Box<dyn ErrorStrategy<'a, T> + 'a>;
 
 #[impl_tid]
-impl<'a, T: Parser<'a> + TidAble<'a>> TidAble<'a> for Box<dyn ErrorStrategy<'a, T> + 'a> {}
+impl<'a, T: Recognizer<'a> + TidAble<'a>> TidAble<'a> for Box<dyn ErrorStrategy<'a, T> + 'a> {}
 
-impl<'a, T: Parser<'a> + TidAble<'a>> ErrorStrategy<'a, T> for Box<dyn ErrorStrategy<'a, T> + 'a> {
+impl<'a, T: Recognizer<'a> + TidAble<'a>> ErrorStrategy<'a, T>
+    for Box<dyn ErrorStrategy<'a, T> + 'a>
+{
     #[inline(always)]
-    fn reset(&mut self, recognizer: &mut T) { self.deref_mut().reset(recognizer) }
+    fn reset(&mut self, recognizer: &mut T) {
+        self.deref_mut().reset(recognizer)
+    }
 
     #[inline(always)]
     fn recover_inline(
@@ -130,13 +133,15 @@ impl<'a, T: Parser<'a> + TidAble<'a>> ErrorStrategy<'a, T> for Box<dyn ErrorStra
     }
 
     #[inline(always)]
-    fn report_match(&mut self, recognizer: &mut T) { self.deref_mut().report_match(recognizer) }
+    fn report_match(&mut self, recognizer: &mut T) {
+        self.deref_mut().report_match(recognizer)
+    }
 }
 
 /// This is the default implementation of `ErrorStrategy` used for
 /// error reporting and recovery in ANTLR parsers.
 #[derive(Debug, Tid)]
-pub struct DefaultErrorStrategy<'input, Ctx: ParserNodeType<'input>> {
+pub struct DefaultErrorStrategy<'input, Ctx: RecogniserNodeType<'input>> {
     error_recovery_mode: bool,
     last_error_index: isize,
     last_error_states: Option<IntervalSet>,
@@ -144,11 +149,13 @@ pub struct DefaultErrorStrategy<'input, Ctx: ParserNodeType<'input>> {
     next_tokens_ctx: Option<Rc<Ctx::Type>>,
 }
 
-impl<'input, Ctx: ParserNodeType<'input>> Default for DefaultErrorStrategy<'input, Ctx> {
-    fn default() -> Self { Self::new() }
+impl<'input, Ctx: RecogniserNodeType<'input>> Default for DefaultErrorStrategy<'input, Ctx> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
-impl<'input, Ctx: ParserNodeType<'input>> DefaultErrorStrategy<'input, Ctx> {
+impl<'input, Ctx: RecogniserNodeType<'input>> DefaultErrorStrategy<'input, Ctx> {
     /// Creates new instance of `DefaultErrorStrategy`
     pub fn new() -> Self {
         Self {
@@ -160,14 +167,14 @@ impl<'input, Ctx: ParserNodeType<'input>> DefaultErrorStrategy<'input, Ctx> {
         }
     }
 
-    fn begin_error_condition<T: Parser<'input, Node = Ctx, TF = Ctx::TF>>(
+    fn begin_error_condition<T: Recognizer<'input, Node = Ctx, TF = Ctx::TF>>(
         &mut self,
         _recognizer: &T,
     ) {
         self.error_recovery_mode = true;
     }
 
-    fn end_error_condition<T: Parser<'input, Node = Ctx, TF = Ctx::TF>>(
+    fn end_error_condition<T: Recognizer<'input, Node = Ctx, TF = Ctx::TF>>(
         &mut self,
         _recognizer: &T,
     ) {
@@ -176,7 +183,7 @@ impl<'input, Ctx: ParserNodeType<'input>> DefaultErrorStrategy<'input, Ctx> {
         self.last_error_states = None;
     }
 
-    fn report_no_viable_alternative<T: Parser<'input, Node = Ctx, TF = Ctx::TF>>(
+    fn report_no_viable_alternative<T: Recognizer<'input, Node = Ctx, TF = Ctx::TF>>(
         &self,
         recognizer: &mut T,
         e: &NoViableAltError,
@@ -193,7 +200,7 @@ impl<'input, Ctx: ParserNodeType<'input>> DefaultErrorStrategy<'input, Ctx> {
         format!("no viable alternative at input '{}'", input)
     }
 
-    fn report_input_mismatch<T: Parser<'input, Node = Ctx, TF = Ctx::TF>>(
+    fn report_input_mismatch<T: Recognizer<'input, Node = Ctx, TF = Ctx::TF>>(
         &self,
         recognizer: &T,
         e: &InputMisMatchError,
@@ -207,7 +214,7 @@ impl<'input, Ctx: ParserNodeType<'input>> DefaultErrorStrategy<'input, Ctx> {
         )
     }
 
-    fn report_failed_predicate<T: Parser<'input, Node = Ctx, TF = Ctx::TF>>(
+    fn report_failed_predicate<T: Recognizer<'input, Node = Ctx, TF = Ctx::TF>>(
         &self,
         recognizer: &T,
         e: &FailedPredicateError,
@@ -219,7 +226,7 @@ impl<'input, Ctx: ParserNodeType<'input>> DefaultErrorStrategy<'input, Ctx> {
         )
     }
 
-    fn report_unwanted_token<T: Parser<'input, Node = Ctx, TF = Ctx::TF>>(
+    fn report_unwanted_token<T: Recognizer<'input, Node = Ctx, TF = Ctx::TF>>(
         &mut self,
         recognizer: &mut T,
     ) {
@@ -237,7 +244,7 @@ impl<'input, Ctx: ParserNodeType<'input>> DefaultErrorStrategy<'input, Ctx> {
         recognizer.notify_error_listeners(msg, Some(t), None);
     }
 
-    fn report_missing_token<T: Parser<'input, Node = Ctx, TF = Ctx::TF>>(
+    fn report_missing_token<T: Recognizer<'input, Node = Ctx, TF = Ctx::TF>>(
         &mut self,
         recognizer: &mut T,
     ) {
@@ -259,7 +266,7 @@ impl<'input, Ctx: ParserNodeType<'input>> DefaultErrorStrategy<'input, Ctx> {
         recognizer.notify_error_listeners(msg, Some(t), None);
     }
 
-    fn single_token_insertion<T: Parser<'input, Node = Ctx, TF = Ctx::TF>>(
+    fn single_token_insertion<T: Recognizer<'input, Node = Ctx, TF = Ctx::TF>>(
         &mut self,
         recognizer: &mut T,
     ) -> bool {
@@ -283,7 +290,7 @@ impl<'input, Ctx: ParserNodeType<'input>> DefaultErrorStrategy<'input, Ctx> {
         false
     }
 
-    fn single_token_deletion<'a, T: Parser<'input, Node = Ctx, TF = Ctx::TF>>(
+    fn single_token_deletion<'a, T: Recognizer<'input, Node = Ctx, TF = Ctx::TF>>(
         &mut self,
         recognizer: &'a mut T,
     ) -> Option<&'a <T::TF as TokenFactory<'input>>::Tok> {
@@ -300,7 +307,7 @@ impl<'input, Ctx: ParserNodeType<'input>> DefaultErrorStrategy<'input, Ctx> {
         None
     }
 
-    fn get_missing_symbol<T: Parser<'input, Node = Ctx, TF = Ctx::TF>>(
+    fn get_missing_symbol<T: Recognizer<'input, Node = Ctx, TF = Ctx::TF>>(
         &self,
         recognizer: &mut T,
     ) -> <T::TF as TokenFactory<'input>>::Tok {
@@ -338,7 +345,7 @@ impl<'input, Ctx: ParserNodeType<'input>> DefaultErrorStrategy<'input, Ctx> {
         // .modify_with(|it| it.text = token_text)
     }
 
-    fn get_expected_tokens<T: Parser<'input, Node = Ctx, TF = Ctx::TF>>(
+    fn get_expected_tokens<T: Recognizer<'input, Node = Ctx, TF = Ctx::TF>>(
         &self,
         recognizer: &T,
     ) -> IntervalSet {
@@ -354,7 +361,7 @@ impl<'input, Ctx: ParserNodeType<'input>> DefaultErrorStrategy<'input, Ctx> {
         format!("'{}'", escape_whitespaces(s, false))
     }
 
-    fn get_error_recovery_set<T: Parser<'input, Node = Ctx, TF = Ctx::TF>>(
+    fn get_error_recovery_set<T: Recognizer<'input, Node = Ctx, TF = Ctx::TF>>(
         &self,
         recognizer: &T,
     ) -> IntervalSet {
@@ -377,7 +384,7 @@ impl<'input, Ctx: ParserNodeType<'input>> DefaultErrorStrategy<'input, Ctx> {
         return recover_set;
     }
 
-    fn consume_until<T: Parser<'input, Node = Ctx, TF = Ctx::TF>>(
+    fn consume_until<T: Recognizer<'input, Node = Ctx, TF = Ctx::TF>>(
         &mut self,
         recognizer: &mut T,
         set: &IntervalSet,
@@ -390,8 +397,10 @@ impl<'input, Ctx: ParserNodeType<'input>> DefaultErrorStrategy<'input, Ctx> {
     }
 }
 
-impl<'a, T: Parser<'a>> ErrorStrategy<'a, T> for DefaultErrorStrategy<'a, T::Node> {
-    fn reset(&mut self, recognizer: &mut T) { self.end_error_condition(recognizer) }
+impl<'a, T: Recognizer<'a>> ErrorStrategy<'a, T> for DefaultErrorStrategy<'a, T::Node> {
+    fn reset(&mut self, recognizer: &mut T) {
+        self.end_error_condition(recognizer)
+    }
 
     fn recover_inline(
         &mut self,
@@ -494,7 +503,9 @@ impl<'a, T: Parser<'a>> ErrorStrategy<'a, T> for DefaultErrorStrategy<'a, T::Nod
         Ok(())
     }
 
-    fn in_error_recovery_mode(&mut self, _recognizer: &mut T) -> bool { self.error_recovery_mode }
+    fn in_error_recovery_mode(&mut self, _recognizer: &mut T) -> bool {
+        self.error_recovery_mode
+    }
 
     fn report_error(&mut self, recognizer: &mut T, e: &ANTLRError) {
         if self.in_error_recovery_mode(recognizer) {
@@ -546,15 +557,17 @@ impl<'a, T: Parser<'a>> ErrorStrategy<'a, T> for DefaultErrorStrategy<'a, T::Nod
 /// [`ParserRuleContext.exception`]: todo
 /// */
 #[derive(Default, Debug, Tid)]
-pub struct BailErrorStrategy<'input, Ctx: ParserNodeType<'input>>(
+pub struct BailErrorStrategy<'input, Ctx: RecogniserNodeType<'input>>(
     DefaultErrorStrategy<'input, Ctx>,
 );
 
-impl<'input, Ctx: ParserNodeType<'input>> BailErrorStrategy<'input, Ctx> {
+impl<'input, Ctx: RecogniserNodeType<'input>> BailErrorStrategy<'input, Ctx> {
     /// Creates new instance of `BailErrorStrategy`
-    pub fn new() -> Self { Self(DefaultErrorStrategy::new()) }
+    pub fn new() -> Self {
+        Self(DefaultErrorStrategy::new())
+    }
 
-    fn process_error<T: Parser<'input, Node = Ctx, TF = Ctx::TF>>(
+    fn process_error<T: Recognizer<'input, Node = Ctx, TF = Ctx::TF>>(
         &self,
         recognizer: &mut T,
         e: &ANTLRError,
@@ -579,7 +592,9 @@ impl<'input, Ctx: ParserNodeType<'input>> BailErrorStrategy<'input, Ctx> {
 pub struct ParseCancelledError(ANTLRError);
 
 impl Error for ParseCancelledError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> { Some(&self.0) }
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.0)
+    }
 }
 
 impl Display for ParseCancelledError {
@@ -589,9 +604,11 @@ impl Display for ParseCancelledError {
     }
 }
 
-impl<'a, T: Parser<'a>> ErrorStrategy<'a, T> for BailErrorStrategy<'a, T::Node> {
+impl<'a, T: Recognizer<'a>> ErrorStrategy<'a, T> for BailErrorStrategy<'a, T::Node> {
     #[inline(always)]
-    fn reset(&mut self, recognizer: &mut T) { self.0.reset(recognizer) }
+    fn reset(&mut self, recognizer: &mut T) {
+        self.0.reset(recognizer)
+    }
 
     #[cold]
     fn recover_inline(

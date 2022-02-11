@@ -8,17 +8,16 @@ use crate::atn_config_set::ATNConfigSet;
 use crate::dfa::DFA;
 use crate::errors::ANTLRError;
 
-use crate::parser::Parser;
 use crate::recognizer::Recognizer;
 
 use crate::token_factory::TokenFactory;
 use std::borrow::Cow;
 use std::fmt::Debug;
 
-/// Describes interface for listening on parser/lexer errors.
+/// Describes interface for listening on Recognizer/lexer errors.
 /// Should only listen for errors, for processing/recovering from errors use `ErrorStrategy`
 pub trait ErrorListener<'a, T: Recognizer<'a>> {
-    /// Called when parser/lexer encounter hard error.
+    /// Called when Recognizer/lexer encounter hard error.
     ///
     /// The `_error` is not None for all syntax errors except
     /// when we discover mismatched token errors that we can recover from
@@ -35,7 +34,7 @@ pub trait ErrorListener<'a, T: Recognizer<'a>> {
     ) {
     }
 
-    /// This method is called by the parser when a full-context prediction
+    /// This method is called by the Recognizer when a full-context prediction
     /// results in an ambiguity.
     fn report_ambiguity(
         &self,
@@ -49,7 +48,7 @@ pub trait ErrorListener<'a, T: Recognizer<'a>> {
     ) {
     }
 
-    /// This method is called when an SLL conflict occurs and the parser is about
+    /// This method is called when an SLL conflict occurs and the Recognizer is about
     /// to use the full context information to make an LL decision.
     fn report_attempting_full_context(
         &self,
@@ -62,7 +61,7 @@ pub trait ErrorListener<'a, T: Recognizer<'a>> {
     ) {
     }
 
-    /// This method is called by the parser when a full-context prediction has a
+    /// This method is called by the Recognizer when a full-context prediction has a
     /// unique result.
     fn report_context_sensitivity(
         &self,
@@ -182,7 +181,7 @@ impl<'b, 'a, T: Recognizer<'a>> ErrorListener<'a, T> for ProxyErrorListener<'b, 
 
 /// This implementation of `ErrorListener` can be used to identify
 /// certain potential correctness and performance problems in grammars. "Reports"
-/// are made by calling `Parser::notify_error_listeners` with the appropriate
+/// are made by calling `Recognizer::notify_error_listeners` with the appropriate
 /// message.
 ///
 ///  - Ambiguities: These are cases where more than one path through the
@@ -202,9 +201,11 @@ pub struct DiagnosticErrorListener {
 
 impl DiagnosticErrorListener {
     /// When `exact_only` is true, only exactly known ambiguities are reported.
-    pub fn new(exact_only: bool) -> Self { Self { exact_only } }
+    pub fn new(exact_only: bool) -> Self {
+        Self { exact_only }
+    }
 
-    fn get_decision_description<'a, T: Parser<'a>>(&self, recog: &T, dfa: &DFA) -> String {
+    fn get_decision_description<'a, T: Recognizer<'a>>(&self, recog: &T, dfa: &DFA) -> String {
         let decision = dfa.decision;
         let rule_index = recog.get_atn().states[dfa.atn_start_state].get_rule_index();
 
@@ -217,7 +218,7 @@ impl DiagnosticErrorListener {
     }
     /// Computes the set of conflicting or ambiguous alternatives from a
     /// configuration set, if that information was not already provided by the
-    /// parser in `alts`.
+    /// Recognizer in `alts`.
     pub fn get_conflicting_alts<'a>(
         &self,
         alts: Option<&'a BitSet>,
@@ -236,7 +237,7 @@ impl DiagnosticErrorListener {
     }
 }
 
-impl<'a, T: Parser<'a>> ErrorListener<'a, T> for DiagnosticErrorListener {
+impl<'a, T: Recognizer<'a>> ErrorListener<'a, T> for DiagnosticErrorListener {
     fn report_ambiguity(
         &self,
         recognizer: &T,
@@ -306,11 +307,11 @@ impl DefaultErrorListener {
     fn syntax_error(&self, recognizer: Recognizer, offendingSymbol: interface {
     }, line: isize, column: isize, msg: String, e: RecognitionError) { unimplemented!() }
 
-    fn report_ambiguity(&self, recognizer: Parser, dfa: * DFA, startIndex: isize, stopIndex: isize, exact: bool, ambigAlts: * BitSet, configs: ATNConfigSet) { unimplemented!() }
+    fn report_ambiguity(&self, recognizer: Recognizer, dfa: * DFA, startIndex: isize, stopIndex: isize, exact: bool, ambigAlts: * BitSet, configs: ATNConfigSet) { unimplemented!() }
 
-    fn report_attempting_full_context(&self, recognizer: Parser, dfa: * DFA, startIndex: isize, stopIndex: isize, conflictingAlts: * BitSet, configs: ATNConfigSet) { unimplemented!() }
+    fn report_attempting_full_context(&self, recognizer: Recognizer, dfa: * DFA, startIndex: isize, stopIndex: isize, conflictingAlts: * BitSet, configs: ATNConfigSet) { unimplemented!() }
 
-    fn report_context_sensitivity(&self, recognizer: Parser, dfa: * DFA, startIndex: isize, stopIndex: isize, prediction: isize, configs: ATNConfigSet) { unimplemented!() }
+    fn report_context_sensitivity(&self, recognizer: Recognizer, dfa: * DFA, startIndex: isize, stopIndex: isize, prediction: isize, configs: ATNConfigSet) { unimplemented!() }
 
     pub struct ConsoleErrorListener {
     base: DefaultErrorListener,
@@ -339,10 +340,10 @@ impl DefaultErrorListener {
         }
     }
 
-    fn report_ambiguity(&self, recognizer: Parser, dfa: * DFA, startIndex: isize, stopIndex: isize, exact: bool, ambigAlts: * BitSet, configs: ATNConfigSet) { unimplemented!() }
+    fn report_ambiguity(&self, recognizer: Recognizer, dfa: * DFA, startIndex: isize, stopIndex: isize, exact: bool, ambigAlts: * BitSet, configs: ATNConfigSet) { unimplemented!() }
 
-    fn report_attempting_full_context(&self, recognizer: Parser, dfa: * DFA, startIndex: isize, stopIndex: isize, conflictingAlts: * BitSet, configs: ATNConfigSet) { unimplemented!() }
+    fn report_attempting_full_context(&self, recognizer: Recognizer, dfa: * DFA, startIndex: isize, stopIndex: isize, conflictingAlts: * BitSet, configs: ATNConfigSet) { unimplemented!() }
 
-    fn report_context_sensitivity(&self, recognizer: Parser, dfa: * DFA, startIndex: isize, stopIndex: isize, prediction: isize, configs: ATNConfigSet) { unimplemented!() }
+    fn report_context_sensitivity(&self, recognizer: Recognizer, dfa: * DFA, startIndex: isize, stopIndex: isize, prediction: isize, configs: ATNConfigSet) { unimplemented!() }
 }
  */

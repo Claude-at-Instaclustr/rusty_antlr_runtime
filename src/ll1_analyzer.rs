@@ -8,9 +8,10 @@ use crate::atn::ATN;
 use crate::atn_config::ATNConfig;
 use crate::atn_state::{ATNState, ATNStateType};
 use crate::interval_set::IntervalSet;
-use crate::parser::ParserNodeType;
+
 use crate::prediction_context::PredictionContext;
 use crate::prediction_context::EMPTY_PREDICTION_CONTEXT;
+use crate::recognizer::RecogniserNodeType;
 use crate::token::{TOKEN_EOF, TOKEN_EPSILON, TOKEN_INVALID_TYPE, TOKEN_MIN_USER_TOKEN_TYPE};
 use crate::transition::TransitionType::TRANSITION_NOTSET;
 use crate::transition::{RuleTransition, TransitionType};
@@ -20,11 +21,13 @@ pub struct LL1Analyzer<'a> {
 }
 
 impl LL1Analyzer<'_> {
-    pub fn new(atn: &ATN) -> LL1Analyzer<'_> { LL1Analyzer { atn } }
+    pub fn new(atn: &ATN) -> LL1Analyzer<'_> {
+        LL1Analyzer { atn }
+    }
 
     //    fn get_decision_lookahead(&self, _s: &dyn ATNState) -> &Vec<IntervalSet> { unimplemented!() }
 
-    pub fn look<'input, Ctx: ParserNodeType<'input>>(
+    pub fn look<'input, Ctx: RecogniserNodeType<'input>>(
         &self,
         s: &dyn ATNState,
         stop_state: Option<&dyn ATNState>,

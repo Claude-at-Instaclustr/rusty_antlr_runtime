@@ -10,10 +10,9 @@ use murmur3::murmur3_32::MurmurHasher;
 
 use crate::atn::ATN;
 use crate::dfa::ScopeExt;
-use crate::parser::ParserNodeType;
-use crate::parser_atn_simulator::MergeCache;
 
 use crate::prediction_context::PredictionContext::{Array, Singleton};
+use crate::recognizer::RecogniserNodeType;
 use crate::rule_context::RuleContext;
 
 use crate::transition::RuleTransition;
@@ -22,6 +21,12 @@ pub const PREDICTION_CONTEXT_EMPTY_RETURN_STATE: isize = 0x7FFFFFFF;
 
 #[cfg(test)]
 mod test;
+
+pub(crate) type MergeCache = HashMap<
+    (Arc<PredictionContext>, Arc<PredictionContext>),
+    Arc<PredictionContext>,
+    MurmurHasherBuilder,
+>;
 
 //todo make return states ATNStateRef
 #[derive(Eq, Clone, Debug)]
@@ -137,7 +142,9 @@ impl Display for PredictionContext {
 //}
 
 impl Hash for PredictionContext {
-    fn hash<H: Hasher>(&self, state: &mut H) { state.write_i32(self.hash_code()) }
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_i32(self.hash_code())
+    }
 }
 
 lazy_static! {
@@ -386,9 +393,9 @@ impl PredictionContext {
                     return_states: vec![a.return_state, b.return_state],
                 };
                 let mut sorted = true;
-                let mut i =1;
-                while i<result.return_states.len() && sorted {
-                    sorted = result.return_states[i-1] < result.return_states[i];
+                let mut i = 1;
+                while i < result.return_states.len() && sorted {
+                    sorted = result.return_states[i - 1] < result.return_states[i];
                     i += 1;
                 }
                 if !sorted {
@@ -520,7 +527,7 @@ impl PredictionContext {
         return m;
     }
 
-    pub fn from_rule_context<'input, Ctx: ParserNodeType<'input>>(
+    pub fn from_rule_context<'input, Ctx: RecogniserNodeType<'input>>(
         atn: &ATN,
         outer_context: &Ctx::Type,
     ) -> Arc<PredictionContext> {
@@ -578,7 +585,9 @@ pub struct MurmurHasherBuilder {}
 impl BuildHasher for MurmurHasherBuilder {
     type Hasher = MurmurHasher;
 
-    fn build_hasher(&self) -> Self::Hasher { MurmurHasher::default() }
+    fn build_hasher(&self) -> Self::Hasher {
+        MurmurHasher::default()
+    }
 }
 
 impl PredictionContextCache {
@@ -633,12 +642,10 @@ impl PredictionContextCache {
             return EMPTY_PREDICTION_CONTEXT.clone();
         } else if parents.len() == 1 {
             PredictionContext::new_singleton(parents[0].clone(), context.get_return_state(0))
+        } else if let Array(array) = context.deref() {
+            PredictionContext::new_array(parents, array.return_states.clone())
         } else {
-            if let Array(array) = context.deref() {
-                PredictionContext::new_array(parents, array.return_states.clone())
-            } else {
-                unreachable!()
-            }
+            unreachable!()
         };
 
         let updated = Arc::new(updated);
@@ -653,5 +660,7 @@ impl PredictionContextCache {
     }
 
     #[doc(hidden)]
-    pub fn length(&self) -> usize { self.cache.read().unwrap().len() }
+    pub fn length(&self) -> usize {
+        self.cache.read().unwrap().len()
+    }
 }

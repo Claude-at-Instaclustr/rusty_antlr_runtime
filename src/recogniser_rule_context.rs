@@ -10,19 +10,20 @@ use better_any::{Tid, TidAble, TidExt};
 
 use crate::errors::ANTLRError;
 use crate::interval_set::Interval;
-use crate::parser::ParserNodeType;
+use crate::recognizer::RecogniserNodeType;
 use crate::rule_context::{BaseRuleContext, CustomRuleContext, RuleContext};
 use crate::token::Token;
 use crate::token_factory::TokenFactory;
-use crate::tree::{NodeText, ParseTree, ParseTreeVisitor, TerminalNode, Tree, VisitableDyn};
+use crate::tree::{NodeImpl, NodeType, Node};
+//use crate::tree::{ParseTree, ParseTreeVisitor, TerminalNode, Tree, VisitableDyn};
 
 /// Syntax tree node for particular parser rule.
 ///
 /// Not yet good for custom implementations so currently easiest option
 /// is to just copy `BaseParserRuleContext` or `BaseRuleContext` and strip/extend them
 #[allow(missing_docs)]
-pub trait ParserRuleContext<'input>:
-    ParseTree<'input> + RuleContext<'input> + Debug + Tid<'input>
+pub trait RecogniserRuleContext<'input>:
+    Node<'input> + RuleContext<'input> + Debug + Tid<'input>
 {
     fn set_exception(&self, _e: ANTLRError) {}
 
@@ -67,7 +68,7 @@ pub trait ParserRuleContext<'input>:
     // fn add_token_node(&self, token: TerminalNode<'input, Self::TF>) { }
     // fn add_error_node(&self, bad_token: ErrorNode<'input, Self::TF>) { }
 
-    fn add_child(&self, _child: Rc<<Self::Ctx as ParserNodeType<'input>>::Type>) {}
+    fn add_child(&self, _child: Rc<<Self::Ctx as RecogniserNodeType<'input>>::Type>) {}
     fn remove_last_child(&self) {}
 
     // fn enter_rule(&self, listener: &mut dyn Any);
@@ -75,7 +76,7 @@ pub trait ParserRuleContext<'input>:
 
     fn child_of_type<T>(&self, pos: usize) -> Option<Rc<T>>
     where
-        T: ParserRuleContext<'input, TF = Self::TF, Ctx = Self::Ctx> + 'input,
+        T: RecogniserRuleContext<'input, TF = Self::TF, Ctx = Self::Ctx> + 'input,
         Self: Sized,
     {
         self.get_children()
@@ -87,7 +88,7 @@ pub trait ParserRuleContext<'input>:
     // todo, return iterator
     fn children_of_type<T>(&self) -> Vec<Rc<T>>
     where
-        T: ParserRuleContext<'input, TF = Self::TF, Ctx = Self::Ctx> + 'input,
+        T: RecogniserRuleContext<'input, TF = Self::TF, Ctx = Self::Ctx> + 'input,
         Self: Sized,
     {
         self.get_children()
@@ -96,54 +97,48 @@ pub trait ParserRuleContext<'input>:
             .collect()
     }
 
-    fn get_token(&self, ttype: isize, pos: usize) -> Option<Rc<TerminalNode<'input, Self::Ctx>>> {
+    fn get_token(&self, token_type: isize, pos: usize) -> Option<dyn Token<'input>> {
         self.get_children()
-            // .filter(|it| it.deref().self_id() == TerminalNode::<'input, Self::Ctx>::id())
-            .filter_map(|it| it.downcast_rc::<TerminalNode<'input, Self::Ctx>>().ok())
-            .filter(|it| it.symbol.borrow().get_token_type() == ttype)
+            .filter(|it| it.is_node_type( &NodeType::Leaf) && it.is_token_type( token_type))
+            .map( |it| it.get_token() )
             .nth(pos)
     }
 
-    fn get_tokens(&self, ttype: isize) -> Vec<Rc<TerminalNode<'input, Self::Ctx>>> {
+    fn get_tokens(&self, token_type: isize) -> Vec<Rc<Option<dyn Token<'input>>>> {
         self.get_children()
             // .iter()
-            .filter_map(|it| it.downcast_rc::<TerminalNode<'input, Self::Ctx>>().ok())
-            // .filter(|it| it.deref().self_id() == TerminalNode::<'input, Self::Ctx>::id())
-            // .map(|it| cast_rc::<'input, TerminalNode<'input, Self::Ctx>>(it.clone()))
-            .filter(|it| it.symbol.borrow().get_token_type() == ttype)
+            .filter(|it| it.is_node_type( &NodeType::Leaf) && it.is_token_type( token_type))
+            .map(|it| Rc::new(it.get_token()))
             .collect()
     }
 
-    // fn upcast(&self) -> &dyn ParserRuleContext<'input, TF=Self::TF>;
 }
 
 //Allows to implement generic functions on trait object as well
 /// Extention trait implemented for all `ParserRuleContext`s
-pub trait RuleContextExt<'input>: ParserRuleContext<'input> {
+pub trait RuleContextExt<'input>: RecogniserRuleContext<'input> {
     /// Prints list of parent rules
     fn to_string<Z>(self: &Rc<Self>, rule_names: Option<&[&str]>, stop: Option<Rc<Z>>) -> String
     where
-        Z: ParserRuleContext<'input, Ctx = Self::Ctx, TF = Self::TF> + ?Sized + 'input,
-        Self::Ctx: ParserNodeType<'input, Type = Z>,
-        /*Rc<Self>: CoerceUnsized<Rc<Z>>*/;
+        Z: RecogniserRuleContext<'input, Ctx = Self::Ctx, TF = Self::TF> + ?Sized + 'input,
+        Self::Ctx: RecogniserNodeType<'input, Type = Z>,
+        Rc<Self>: CoerceUnsized<Rc<Z>>;
 
     #[doc(hidden)]
     fn accept_children<V>(&self, visitor: &mut V)
     where
         V: ParseTreeVisitor<'input, Self::Ctx> + ?Sized,
-        <Self::Ctx as ParserNodeType<'input>>::Type: VisitableDyn<V>;
+        <Self::Ctx as RecogniserNodeType<'input>>::Type: VisitableDyn<V>;
 }
 
-impl<'input, T: ParserRuleContext<'input> + ?Sized + 'input> RuleContextExt<'input> for T {
+impl<'input, T: RecogniserRuleContext<'input> + ?Sized + 'input> RuleContextExt<'input> for T {
     fn to_string<Z>(self: &Rc<Self>, rule_names: Option<&[&str]>, stop: Option<Rc<Z>>) -> String
     where
-        Z: ParserRuleContext<'input, Ctx = T::Ctx, TF = T::TF> + ?Sized + 'input,
-        T::Ctx: ParserNodeType<'input, Type = Z>,
-        /*Rc<T>: CoerceUnsized<Rc<Z>>,*/
+        Z: RecogniserRuleContext<'input, Ctx = T::Ctx, TF = T::TF> + ?Sized + 'input,
+        T::Ctx: RecogniserNodeType<'input, Type = Z>,
+        Rc<T>: CoerceUnsized<Rc<Z>>,
     {
         let mut result = String::from("[");
-        self.
-        let x = self.clone_into()
         let mut next: Option<Rc<Z>> = Some(self.clone() as Rc<Z>);
         while let Some(ref p) = next {
             if stop.is_some() && (stop.is_none() || Rc::ptr_eq(p, stop.as_ref().unwrap())) {
@@ -158,9 +153,11 @@ impl<'input, T: ParserRuleContext<'input> + ?Sized + 'input> RuleContextExt<'inp
                     .unwrap_or_else(|| rule_index.to_string());
                 result.extend(rule_name.chars());
                 result.push(' ');
-            } else if !p.is_empty() {
-                result.extend(p.get_invoking_state().to_string().chars());
-                result.push(' ');
+            } else {
+                if !p.is_empty() {
+                    result.extend(p.get_invoking_state().to_string().chars());
+                    result.push(' ');
+                }
             }
 
             next = p.get_parent().clone();
@@ -177,7 +174,7 @@ impl<'input, T: ParserRuleContext<'input> + ?Sized + 'input> RuleContextExt<'inp
     fn accept_children<V>(&self, visitor: &mut V)
     where
         V: ParseTreeVisitor<'input, Self::Ctx> + ?Sized,
-        <Self::Ctx as ParserNodeType<'input>>::Type: VisitableDyn<V>,
+        <Self::Ctx as RecogniserNodeType<'input>>::Type: VisitableDyn<V>,
     {
         self.get_children()
             .for_each(|child| child.accept_dyn(visitor))
@@ -188,8 +185,8 @@ impl<'input, T: ParserRuleContext<'input> + ?Sized + 'input> RuleContextExt<'inp
 #[doc(hidden)]
 pub fn cast<'a, T, Result>(ctx: &T) -> &Result
 where
-    T: ParserRuleContext<'a> + 'a + ?Sized,
-    Result: ParserRuleContext<'a, Ctx = T::Ctx> + 'a,
+    T: RecogniserRuleContext<'a> + 'a + ?Sized,
+    Result: RecogniserRuleContext<'a, Ctx = T::Ctx> + 'a,
 {
     ctx.downcast_ref().unwrap()
     // unsafe { &*(ctx as *const T as *const Result) }
@@ -201,7 +198,7 @@ where
 #[doc(hidden)]
 // technically should be unsafe but in order to not force unsafe into user code
 // it is just #[doc(hidden)]
-pub fn cast_mut<'a, T: ParserRuleContext<'a> + 'a + ?Sized, Result: 'a>(
+pub fn cast_mut<'a, T: RecogniserRuleContext<'a> + 'a + ?Sized, Result: 'a>(
     ctx: &mut Rc<T>,
 ) -> &mut Result {
     //    if Rc::strong_count(ctx) != 1 { panic!("cant mutate Rc with multiple strong ref count"); }
@@ -236,30 +233,32 @@ pub struct BaseParserRuleContext<'input, Ctx: CustomRuleContext<'input>> {
     /// error if there was any in this node
     pub exception: Option<Box<ANTLRError>>,
     /// List of children of current node
-    pub(crate) children: RefCell<Vec<Rc<<Ctx::Ctx as ParserNodeType<'input>>::Type>>>,
-}
-impl<'input, Ctx: CustomRuleContext<'input>> NodeText for BaseParserRuleContext<'input, Ctx> {
-    fn get_node_text(&self, _rule_names: &[&str]) -> String { "<unknown>".to_owned() }
+    pub(crate) children: RefCell<Vec<Rc<<Ctx::Ctx as RecogniserNodeType<'input>>::Type>>>,
 }
 
+/*
 impl<'input, Ctx: CustomRuleContext<'input>> Debug for BaseParserRuleContext<'input, Ctx> {
-    /*default*/ fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+    default fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         f.write_str(type_name::<Self>())
     }
 }
-
+*/
 impl<'input, Ctx: CustomRuleContext<'input>> RuleContext<'input>
     for BaseParserRuleContext<'input, Ctx>
 {
-    fn get_invoking_state(&self) -> isize { self.base.get_invoking_state() }
+    fn get_invoking_state(&self) -> isize {
+        self.base.get_invoking_state()
+    }
 
-    fn set_invoking_state(&self, t: isize) { self.base.set_invoking_state(t) }
+    fn set_invoking_state(&self, t: isize) {
+        self.base.set_invoking_state(t)
+    }
 
-    fn get_parent_ctx(&self) -> Option<Rc<<Ctx::Ctx as ParserNodeType<'input>>::Type>> {
+    fn get_parent_ctx(&self) -> Option<Rc<<Ctx::Ctx as RecogniserNodeType<'input>>::Type>> {
         self.base.get_parent_ctx()
     }
 
-    fn set_parent(&self, parent: &Option<Rc<<Ctx::Ctx as ParserNodeType<'input>>::Type>>) {
+    fn set_parent(&self, parent: &Option<Rc<<Ctx::Ctx as RecogniserNodeType<'input>>::Type>>) {
         self.base.set_parent(parent)
     }
 }
@@ -270,7 +269,9 @@ impl<'input, Ctx: CustomRuleContext<'input>> CustomRuleContext<'input>
     type TF = Ctx::TF;
     type Ctx = Ctx::Ctx;
 
-    fn get_rule_index(&self) -> usize { self.base.ext.get_rule_index() }
+    fn get_rule_index(&self) -> usize {
+        self.base.ext.get_rule_index()
+    }
 }
 
 // unsafe impl<'input, Ctx: CustomRuleContext<'input>> Tid for BaseParserRuleContext<'input, Ctx> {
@@ -287,22 +288,30 @@ impl<'input, Ctx: CustomRuleContext<'input>> CustomRuleContext<'input>
 impl<'input, Ctx: CustomRuleContext<'input>> Deref for BaseParserRuleContext<'input, Ctx> {
     type Target = Ctx;
 
-    fn deref(&self) -> &Self::Target { &self.base.ext }
+    fn deref(&self) -> &Self::Target {
+        &self.base.ext
+    }
 }
 
 impl<'input, Ctx: CustomRuleContext<'input>> DerefMut for BaseParserRuleContext<'input, Ctx> {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.base.ext }
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.base.ext
+    }
 }
 
 impl<'input, Ctx: CustomRuleContext<'input>> Borrow<Ctx> for BaseParserRuleContext<'input, Ctx> {
-    fn borrow(&self) -> &Ctx { &self.base.ext }
+    fn borrow(&self) -> &Ctx {
+        &self.base.ext
+    }
 }
 
 impl<'input, Ctx: CustomRuleContext<'input>> BorrowMut<Ctx> for BaseParserRuleContext<'input, Ctx> {
-    fn borrow_mut(&mut self) -> &mut Ctx { &mut self.base.ext }
+    fn borrow_mut(&mut self) -> &mut Ctx {
+        &mut self.base.ext
+    }
 }
 
-impl<'input, Ctx: CustomRuleContext<'input> + TidAble<'input>> ParserRuleContext<'input>
+impl<'input, Ctx: CustomRuleContext<'input> + TidAble<'input>> RecogniserRuleContext<'input>
     for BaseParserRuleContext<'input, Ctx>
 {
     fn set_exception(&self, _e: ANTLRError) { /*self.exception = Some(Box::new(e));*/
@@ -359,11 +368,13 @@ impl<'input, Ctx: CustomRuleContext<'input> + TidAble<'input>> ParserRuleContext
     //         node
     //     }
 
-    fn add_child(&self, child: Rc<<Ctx::Ctx as ParserNodeType<'input>>::Type>) {
+    fn add_child(&self, child: Rc<<Ctx::Ctx as RecogniserNodeType<'input>>::Type>) {
         self.children.borrow_mut().push(child);
     }
 
-    fn remove_last_child(&self) { self.children.borrow_mut().pop(); }
+    fn remove_last_child(&self) {
+        self.children.borrow_mut().pop();
+    }
 
     // fn enter_rule(&self, listener: &mut dyn Any) {
     //     Ctx::enter(self, listener)
@@ -378,28 +389,34 @@ impl<'input, Ctx: CustomRuleContext<'input> + TidAble<'input>> ParserRuleContext
     // }
 }
 
-impl<'input, Ctx: CustomRuleContext<'input>> Tree<'input> for BaseParserRuleContext<'input, Ctx> {
-    fn get_parent(&self) -> Option<Rc<<Ctx::Ctx as ParserNodeType<'input>>::Type>> {
+impl<'input, Ctx: CustomRuleContext<'input>> Node<'input> for BaseParserRuleContext<'input, Ctx> {
+    fn get_parent(&self) -> Option<Rc<<Ctx::Ctx as RecogniserNodeType<'input>>::Type>> {
         self.get_parent_ctx()
     }
 
-    fn has_parent(&self) -> bool { self.base.parent_ctx.borrow().is_some() }
+    fn has_parent(&self) -> bool {
+        self.base.parent_ctx.borrow().is_some()
+    }
 
-    fn get_payload(&self) -> Box<dyn Any> { unimplemented!() }
+    fn get_payload(&self) -> Box<dyn Any> {
+        unimplemented!()
+    }
 
-    fn get_child(&self, i: usize) -> Option<Rc<<Self::Ctx as ParserNodeType<'input>>::Type>> {
+    fn get_child(&self, i: usize) -> Option<Rc<<Self::Ctx as RecogniserNodeType<'input>>::Type>> {
         self.children.borrow().get(i).cloned()
     }
 
-    fn get_child_count(&self) -> usize { self.children.borrow().len() }
+    fn get_child_count(&self) -> usize {
+        self.children.borrow().len()
+    }
 
-    // fn get_children<'a>(&'a self) -> Box<dyn ExactSizeIterator<Item=Rc<<Self::Ctx as ParserNodeType<'input>>::Type>> + 'a> where 'input:'a{
+    // fn get_children<'a>(&'a self) -> Box<dyn ExactSizeIterator<Item=Rc<<Self::Ctx as RecogniserNodeType<'input>>::Type>> + 'a> where 'input:'a{
     //     let len = self.children.borrow().len();
     //
     //     Box::new(IndexIter::new(self.children.borrow(),len))
     // }
 
-    // fn get_children_full(&self) -> &RefCell<Vec<Rc<<Ctx::Ctx as ParserNodeType<'input>>::Type>>> {
+    // fn get_children_full(&self) -> &RefCell<Vec<Rc<<Ctx::Ctx as RecogniserNodeType<'input>>::Type>>> {
     //     &self.children
     // }
 }
@@ -414,7 +431,7 @@ impl<'input, Ctx: CustomRuleContext<'input> + TidAble<'input>> ParseTree<'input>
         }
     }
 
-    /*default*/ fn get_text(&self) -> String {
+    fn get_text(&self) -> String {
         let children = self.get_children();
         let mut result = String::new();
 
@@ -428,7 +445,7 @@ impl<'input, Ctx: CustomRuleContext<'input> + TidAble<'input>> ParseTree<'input>
 #[allow(missing_docs)]
 impl<'input, Ctx: CustomRuleContext<'input> + 'input> BaseParserRuleContext<'input, Ctx> {
     pub fn new_parser_ctx(
-        parent_ctx: Option<Rc<<Ctx::Ctx as ParserNodeType<'input>>::Type>>,
+        parent_ctx: Option<Rc<<Ctx::Ctx as RecogniserNodeType<'input>>::Type>>,
         invoking_state: isize,
         ext: Ctx,
     ) -> Self {
@@ -440,7 +457,7 @@ impl<'input, Ctx: CustomRuleContext<'input> + 'input> BaseParserRuleContext<'inp
             children: RefCell::new(vec![]),
         }
     }
-    pub fn copy_from<T: ParserRuleContext<'input, TF = Ctx::TF, Ctx = Ctx::Ctx> + ?Sized>(
+    pub fn copy_from<T: RecogniserRuleContext<'input, TF = Ctx::TF, Ctx = Ctx::Ctx> + ?Sized>(
         ctx: &T,
         ext: Ctx,
     ) -> Self {
@@ -458,7 +475,7 @@ impl<'input, Ctx: CustomRuleContext<'input> + 'input> BaseParserRuleContext<'inp
     }
 
     // pub fn to_string(self: Rc<Self>, rule_names: Option<&[&str]>, stop: Option<Rc<Ctx::Ctx::Type>>) -> String {
-    //     (self as Rc<<Ctx::Ctx as ParserNodeType<'input>>::Type>).to_string(rule_names, stop)
+    //     (self as Rc<<Ctx::Ctx as RecogniserNodeType<'input>>::Type>).to_string(rule_names, stop)
     // }
 }
 
@@ -471,12 +488,14 @@ impl<'input, Ctx: CustomRuleContext<'input> + 'input> BaseParserRuleContext<'inp
 #[doc(hidden)]
 pub trait DerefSeal: Deref {}
 
-impl<'input, T, I> ParserRuleContext<'input> for T
+impl<'input, T, I> RecogniserRuleContext<'input> for T
 where
-    T: DerefSeal<Target = I> + 'input + Debug + Tid<'input> + NodeText,
-    I: ParserRuleContext<'input> + 'input + ?Sized,
+    T: DerefSeal<Target = I> + 'input + Debug + Tid<'input>,
+    I: RecogniserRuleContext<'input> + 'input + ?Sized,
 {
-    fn set_exception(&self, e: ANTLRError) { self.deref().set_exception(e) }
+    fn set_exception(&self, e: ANTLRError) {
+        self.deref().set_exception(e)
+    }
 
     fn set_start(&self, t: Option<<Self::TF as TokenFactory<'input>>::Tok>) {
         self.deref().set_start(t)
@@ -514,11 +533,13 @@ where
         self.deref().stop_mut()
     }
 
-    fn add_child(&self, child: Rc<<I::Ctx as ParserNodeType<'input>>::Type>) {
+    fn add_child(&self, child: Rc<<I::Ctx as RecogniserNodeType<'input>>::Type>) {
         self.deref().add_child(child)
     }
 
-    fn remove_last_child(&self) { self.deref().remove_last_child() }
+    fn remove_last_child(&self) {
+        self.deref().remove_last_child()
+    }
 
     // fn enter_rule(&self, listener: &mut dyn Any) { self.deref().enter_rule(listener) }
     //
@@ -530,87 +551,101 @@ where
 impl<'input, T, I> RuleContext<'input> for T
 where
     T: DerefSeal<Target = I> + 'input + Debug + Tid<'input>,
-    I: ParserRuleContext<'input> + 'input + ?Sized,
+    I: RecogniserRuleContext<'input> + 'input + ?Sized,
 {
-    fn get_invoking_state(&self) -> isize { self.deref().get_invoking_state() }
+    fn get_invoking_state(&self) -> isize {
+        self.deref().get_invoking_state()
+    }
 
-    fn set_invoking_state(&self, t: isize) { self.deref().set_invoking_state(t) }
+    fn set_invoking_state(&self, t: isize) {
+        self.deref().set_invoking_state(t)
+    }
 
-    fn is_empty(&self) -> bool { self.deref().is_empty() }
+    fn is_empty(&self) -> bool {
+        self.deref().is_empty()
+    }
 
-    fn get_parent_ctx(&self) -> Option<Rc<<I::Ctx as ParserNodeType<'input>>::Type>> {
+    fn get_parent_ctx(&self) -> Option<Rc<<I::Ctx as RecogniserNodeType<'input>>::Type>> {
         self.deref().get_parent_ctx()
     }
 
-    fn set_parent(&self, parent: &Option<Rc<<I::Ctx as ParserNodeType<'input>>::Type>>) {
+    fn set_parent(&self, parent: &Option<Rc<<I::Ctx as RecogniserNodeType<'input>>::Type>>) {
         self.deref().set_parent(parent)
     }
 }
 
 impl<'input, T, I> ParseTree<'input> for T
 where
-    T: DerefSeal<Target = I> + 'input + Debug + Tid<'input> + NodeText,
-    I: ParserRuleContext<'input> + 'input + ?Sized,
-{
-    fn get_source_interval(&self) -> Interval { self.deref().get_source_interval() }
-
-    fn get_text(&self) -> String { self.deref().get_text() }
-}
-/*
-impl<'input, T, I> NodeText for T where
     T: DerefSeal<Target = I> + 'input + Debug + Tid<'input>,
-    I: ParserRuleContext<'input> + 'input + ?Sized,
+    I: RecogniserRuleContext<'input> + 'input + ?Sized,
 {
-    fn get_node_text(&self, _rule_names: &[&str]) -> String { "<unknown>".to_owned() }
+    fn get_source_interval(&self) -> Interval {
+        self.deref().get_source_interval()
+    }
+
+    fn get_text(&self) -> String {
+        self.deref().get_text()
+    }
 }
-*/
-impl<'input, T, I> Tree<'input> for T
+
+impl<'input, T, I> Node<'input> for T
 where
-    T: DerefSeal<Target = I> + 'input + Debug + Tid<'input> + NodeText,
-    I: ParserRuleContext<'input> + 'input + ?Sized,
+    T: DerefSeal<Target = I> + 'input + Debug + Tid<'input>,
+    I: RecogniserRuleContext<'input> + 'input + ?Sized,
 {
-    fn get_parent(&self) -> Option<Rc<<I::Ctx as ParserNodeType<'input>>::Type>> {
+    fn get_parent(&self) -> Option<Rc<<I::Ctx as RecogniserNodeType<'input>>::Type>> {
         self.deref().get_parent()
     }
 
-    fn has_parent(&self) -> bool { self.deref().has_parent() }
+    fn has_parent(&self) -> bool {
+        self.deref().has_parent()
+    }
 
-    fn get_payload(&self) -> Box<dyn Any> { self.deref().get_payload() }
+    fn get_payload(&self) -> Box<dyn Any> {
+        self.deref().get_payload()
+    }
 
-    fn get_child(&self, i: usize) -> Option<Rc<<I::Ctx as ParserNodeType<'input>>::Type>> {
+    fn get_child(&self, i: usize) -> Option<Rc<<I::Ctx as RecogniserNodeType<'input>>::Type>> {
         self.deref().get_child(i)
     }
 
-    fn get_child_count(&self) -> usize { self.deref().get_child_count() }
+    fn get_child_count(&self) -> usize {
+        self.deref().get_child_count()
+    }
 
     fn get_children<'a>(
         &'a self,
-    ) -> Box<dyn Iterator<Item = Rc<<Self::Ctx as ParserNodeType<'input>>::Type>> + 'a>
+    ) -> Box<dyn Iterator<Item = Rc<<Self::Ctx as RecogniserNodeType<'input>>::Type>> + 'a>
     where
         'input: 'a,
     {
         self.deref().get_children()
     }
 
-    // fn get_children_full(&self) -> &RefCell<Vec<Rc<<I::Ctx as ParserNodeType<'input>>::Type>>> { self.deref().get_children_full() }
+    // fn get_children_full(&self) -> &RefCell<Vec<Rc<<I::Ctx as RecogniserNodeType<'input>>::Type>>> { self.deref().get_children_full() }
 }
-
 
 impl<'input, T, I> CustomRuleContext<'input> for T
 where
     T: DerefSeal<Target = I> + 'input + Debug + Tid<'input>,
-    I: ParserRuleContext<'input> + 'input + ?Sized,
+    I: RecogniserRuleContext<'input> + 'input + ?Sized,
 {
     type TF = I::TF;
     type Ctx = I::Ctx;
 
-    fn get_rule_index(&self) -> usize { self.deref().get_rule_index() }
+    fn get_rule_index(&self) -> usize {
+        self.deref().get_rule_index()
+    }
 
     // fn type_rule_index() -> usize where Self: Sized { unimplemented!() }
 
-    fn get_alt_number(&self) -> isize { self.deref().get_alt_number() }
+    fn get_alt_number(&self) -> isize {
+        self.deref().get_alt_number()
+    }
 
-    fn set_alt_number(&self, _alt_number: isize) { self.deref().set_alt_number(_alt_number) }
+    fn set_alt_number(&self, _alt_number: isize) {
+        self.deref().set_alt_number(_alt_number)
+    }
 }
 
 //

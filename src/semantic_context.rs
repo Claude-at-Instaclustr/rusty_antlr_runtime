@@ -1,9 +1,8 @@
+use crate::recognizer::{RecogniserNodeType, Recognizer};
 use std::borrow::Cow::{Borrowed, Owned};
 use std::borrow::{Borrow, Cow};
 use std::cmp::Ordering;
 use std::collections::HashSet;
-
-use crate::parser::{Parser, ParserNodeType};
 
 //pub trait SemanticContext:Sync + Send {
 ////    fn evaluate(&self, parser: &Recognizer, outerContext: &RuleContext) -> bool;
@@ -36,10 +35,10 @@ impl SemanticContext {
         pred_index: -1,
         is_ctx_dependent: false,
     };
-    pub(crate) fn evaluate<'a, T: Parser<'a>>(
+    pub(crate) fn evaluate<'a, T: Recognizer<'a>>(
         &self,
         parser: &mut T,
-        outer_context: &<T::Node as ParserNodeType<'a>>::Type,
+        outer_context: &<T::Node as RecogniserNodeType<'a>>::Type,
     ) -> bool {
         match self {
             SemanticContext::Predicate {
@@ -59,10 +58,10 @@ impl SemanticContext {
             SemanticContext::OR(ops) => ops.iter().any(|sem| sem.evaluate(parser, outer_context)),
         }
     }
-    pub(crate) fn eval_precedence<'a, 'b, T: Parser<'b>>(
+    pub(crate) fn eval_precedence<'a, 'b, T: Recognizer<'b>>(
         &'a self,
         parser: &T,
-        outer_context: &<T::Node as ParserNodeType<'b>>::Type,
+        outer_context: &<T::Node as RecogniserNodeType<'b>>::Type,
     ) -> Option<Cow<'a, SemanticContext>> {
         match self {
             SemanticContext::Predicate { .. } => Some(Borrowed(self)),

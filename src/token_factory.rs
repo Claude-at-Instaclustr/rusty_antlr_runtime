@@ -10,6 +10,7 @@ use std::sync::atomic::AtomicIsize;
 use typed_arena::Arena;
 
 use crate::char_stream::{CharStream, InputData};
+use crate::lexer::LexerState;
 use crate::token::Token;
 use crate::token::{CommonToken, OwningToken, TOKEN_INVALID_TYPE};
 use better_any::{Tid, TidAble};
@@ -54,19 +55,9 @@ pub trait TokenFactory<'a>: TidAble<'a> + Sized {
     /// Type of the `CharStream` that factory can produce tokens from
     type From;
 
-    /// Creates token either from `sourse` or from pure data in `text`
+    /// Creates token either from `source` or from pure data in `text`
     /// Either `source` or `text` are not None
-    fn create<T>(
-        &'a self,
-        source: Option<&mut T>,
-        ttype: isize,
-        text: Option<<Self::Data as ToOwned>::Owned>,
-        channel: isize,
-        start: isize,
-        stop: isize,
-        line: isize,
-        column: isize,
-    ) -> Self::Tok
+    fn create<T>(&'a self, source: Option<&mut T>, lexer_state: &LexerState) -> Self::Tok
     where
         T: CharStream<Self::From> + ?Sized;
 
@@ -84,7 +75,9 @@ pub trait TokenFactory<'a>: TidAble<'a> + Sized {
 pub struct CommonTokenFactory;
 
 impl Default for &'_ CommonTokenFactory {
-    fn default() -> Self { &**COMMON_TOKEN_FACTORY_DEFAULT }
+    fn default() -> Self {
+        &**COMMON_TOKEN_FACTORY_DEFAULT
+    }
 }
 
 impl<'a> TokenFactory<'a> for CommonTokenFactory {
@@ -94,47 +87,44 @@ impl<'a> TokenFactory<'a> for CommonTokenFactory {
     type From = Cow<'a, str>;
 
     #[inline]
-    fn create<T>(
-        &'a self,
-        source: Option<&mut T>,
-        ttype: isize,
-        text: Option<String>,
-        channel: isize,
-        start: isize,
-        stop: isize,
-        line: isize,
-        column: isize,
-    ) -> Self::Tok
+    fn create<T>(&'a self, source: Option<&mut T>, lexer_state: &LexerState) -> Self::Tok
     where
         T: CharStream<Self::From> + ?Sized,
     {
-        let text = match (text, source) {
-            (Some(t), _) => Owned(t),
+        let text = match (lexer_state.text, source) {
+            (Some(t), _) => Owned(t.to_owned()),
             (None, Some(x)) => {
-                if stop >= x.size() || start >= x.size() {
+                if lexer_state.stop_char_index >= x.size()
+                    || lexer_state.start_char_index >= x.size()
+                {
                     Borrowed("<EOF>")
                 } else {
-                    x.get_text(start, stop).into()
+                    x.get_text(lexer_state.start_char_index, lexer_state.stop_char_index)
+                        .into()
                 }
             }
             _ => Borrowed(""),
         };
         Box::new(CommonToken {
-            token_type: ttype,
-            channel,
-            start,
-            stop,
+            token_type: lexer_state.token_type,
+            channel: lexer_state.channel,
+            start: lexer_state.start_char_index,
+            stop: lexer_state.stop_char_index,
             token_index: AtomicIsize::new(-1),
-            line,
-            column,
+            line: lexer_state.start_line,
+            column: lexer_state.start_column,
             text,
             read_only: false,
         })
     }
 
-    fn create_invalid() -> Self::Tok { INVALID_COMMON.clone() }
+    fn create_invalid() -> Self::Tok {
+        INVALID_COMMON.clone()
+    }
 
-    fn get_data(from: Self::From) -> Cow<'a, Self::Data> { from }
+    fn get_data(from: Self::From) -> Cow<'a, Self::Data> {
+        from
+    }
 }
 
 /// Token factory that produces heap allocated
@@ -149,47 +139,43 @@ impl<'a> TokenFactory<'a> for OwningTokenFactory {
     type From = String;
 
     #[inline]
-    fn create<T>(
-        &'a self,
-        source: Option<&mut T>,
-        ttype: isize,
-        text: Option<String>,
-        channel: isize,
-        start: isize,
-        stop: isize,
-        line: isize,
-        column: isize,
-    ) -> Self::Tok
+    fn create<T>(&'a self, source: Option<&mut T>, lexer_state: &LexerState) -> Self::Tok
     where
         T: CharStream<String> + ?Sized,
     {
-        let text = match (text, source) {
-            (Some(t), _) => t,
+        let text = match (lexer_state.text, source) {
+            (Some(t), _) => t.to_owned(),
             (None, Some(x)) => {
-                if stop >= x.size() || start >= x.size() {
+                if lexer_state.stop_char_index >= x.size()
+                    || lexer_state.start_char_index >= x.size()
+                {
                     "<EOF>".to_owned()
                 } else {
-                    x.get_text(start, stop)
+                    x.get_text(lexer_state.start_char_index, lexer_state.stop_char_index)
                 }
             }
             _ => String::new(),
         };
         Box::new(OwningToken {
-            token_type: ttype,
-            channel,
-            start,
-            stop,
+            token_type: lexer_state.token_type,
+            channel: lexer_state.channel,
+            start: lexer_state.start_char_index,
+            stop: lexer_state.stop_char_index,
             token_index: AtomicIsize::new(-1),
-            line,
-            column,
+            line: lexer_state.start_line,
+            column: lexer_state.start_column,
             text,
             read_only: false,
         })
     }
 
-    fn create_invalid() -> Self::Tok { INVALID_OWNING.clone() }
+    fn create_invalid() -> Self::Tok {
+        INVALID_OWNING.clone()
+    }
 
-    fn get_data(from: Self::From) -> Cow<'a, Self::Data> { from.into() }
+    fn get_data(from: Self::From) -> Cow<'a, Self::Data> {
+        from.into()
+    }
 }
 
 // pub struct DynFactory<'input,TF:TokenFactory<'.into()input>>(TF) where TF::Tok:CoerceUnsized<Box<dyn Token+'input>>;
@@ -264,27 +250,30 @@ where
     fn create<T>(
         &'input self,
         source: Option<&mut T>,
-        ttype: isize,
-        text: Option<<Self::Data as ToOwned>::Owned>,
-        channel: isize,
-        start: isize,
-        stop: isize,
-        line: isize,
-        column: isize,
+        lexer_state: LexerState, /*
+                                 ttype: isize,
+                                 text: Option<<Self::Data as ToOwned>::Owned>,
+                                 channel: isize,
+                                 start: isize,
+                                 stop: isize,
+                                 line: isize,
+                                 column: isize,*/
     ) -> Self::Tok
     where
         T: CharStream<Self::From> + ?Sized,
     {
         // todo remove redundant allocation
-        let token = self
-            .factory
-            .create(source, ttype, text, channel, start, stop, line, column);
+        let token = self.factory.create(source, lexer_state);
         self.arena.alloc(*token)
     }
 
-    fn create_invalid() -> &'input Tok { <&Tok as Default>::default() }
+    fn create_invalid() -> &'input Tok {
+        <&Tok as Default>::default()
+    }
 
-    fn get_data(from: Self::From) -> Cow<'input, Self::Data> { TF::get_data(from) }
+    fn get_data(from: Self::From) -> Cow<'input, Self::Data> {
+        TF::get_data(from)
+    }
 }
 
 #[doc(hidden)]
