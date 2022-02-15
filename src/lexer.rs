@@ -2,31 +2,32 @@
 use std::borrow::Cow::Borrowed;
 use std::borrow::{Borrow, Cow};
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 
 use std::rc::Rc;
 
 use crate::char_stream::{CharStream, InputData};
 use crate::error_listener::{ConsoleErrorListener, ErrorListener};
-use crate::errors::ANTLRError;
+use crate::errors::{ANTLRError, BaseRecognitionError};
 use crate::int_stream::IntStream;
 use crate::lexer_atn_simulator::{ILexerATNSimulator, LexerATNSimulator};
 
 use crate::atn::ATN;
 use crate::atn_deserializer::ATNDeserializer;
 use crate::dfa::DFA;
-use crate::recognizer::{Actions, RecogniserNodeType, Recognizer};
-use crate::rule_context::EmptyContextType;
+use crate::recognizer::{ATNInterpreter, ParseInfo, Recognizer, RecognizerImpl, RULE_INDEX_MAP_TYPE, TOKEN_TYPE_MAP_TYPE};
 use crate::token::TOKEN_INVALID_TYPE;
 use crate::token_factory::{CommonTokenFactory, TokenAware, TokenFactory};
 use crate::token_source::TokenSource;
 use crate::tree::{NodeImpl, NodeType};
-use crate::vocabulary;
-use crate::vocabulary::{Vocabulary, VocabularyImpl};
-use std::ops::{Deref, DerefMut};
+use crate::vocabulary::{VocabularyImpl};
+use std::ops::{DerefMut};
 use std::sync::{Arc, RwLock};
+use crate::dfa_state::DFAState;
+use crate::rule_context::RuleContext;
 
 ///  Lexer functionality required by `LexerATNSimulator` to work properly
-pub trait Lexer<'input>: TokenSource<'input> + Recognizer<'input> {
+pub trait Lexer<'input>: Recognizer<'input> {
     /// Concrete input stream used by this parser
     type Input: IntStream;
     /// Same as `TokenStream::get_input_stream` but returns concrete type instance
@@ -84,24 +85,19 @@ pub struct BaseLexer<
     Input: CharStream<TF::From>,
     TF: TokenFactory<'input> = CommonTokenFactory,
 > {
+    recognizer : RecognizerImpl<'input, dyn Lexer<'input>>,
     // constructor values
-    grammar_file_name: &'static str,
-    rule_names: &'static [&'static str],
-    channel_names: &'static [&'static str],
-    mode_names: &'static [&'static str],
-    vocabulary: VocabularyImpl,
-    serialized_atn: &'static [&'static str],
 
     /// `LexerATNSimulator` instance of this lexer
-    pub interpreter: Option<Box<LexerATNSimulator>>,
+   // pub interpreter: Option<Box<LexerATNSimulator>>,
     /// `CharStream` used by this lexer
-    pub input: Option<Input>,
+   // pub input: Option<Input>,
     //    recog: T,
     tree: NodeImpl<'input>,
 
-    factory: &'input TF,
+    //factory: &'input TF,
 
-    error_listeners: RefCell<Vec<Box<dyn ErrorListener<'input, Self>>>>,
+    //error_listeners: RefCell<Vec<Box<dyn ErrorListener<'input, Self>>>>,
 
     lexer_state: LexerState,
 
@@ -113,7 +109,7 @@ pub struct BaseLexer<
     mode_stack: Vec<usize>,
     /// Mode lexer is currently in
     pub mode: usize,
-    atn: Arc<ATN>,
+    //atn: Arc<ATN>,
     decision_to_DFA: Arc<Vec<RwLock<DFA>>>,
 }
 
@@ -136,6 +132,21 @@ pub(crate) struct LexerState {
     pub start_char_pos_in_line: isize,
 }
 
+impl LexerState {
+    pub fn new() -> LexerState {
+    LexerState {
+    token_type: super::token::TOKEN_INVALID_TYPE,
+    text: None,
+    channel: super::token::TOKEN_DEFAULT_CHANNEL,
+    start_char_index: -1,
+    stop_char_index: 0,
+    start_column: 0,
+    start_line: -1,
+    start_char_pos_in_line: -1,
+}
+}
+}
+
 /*impl<'input, Input, TF> Deref for BaseLexer<'input, Input, TF>
 where
     T: LexerRecog<'input, Self> + 'static,
@@ -154,32 +165,7 @@ where
     fn deref_mut(&mut self) -> &mut Self::Target { &mut self.recog }
 }
 */
-impl<'input, Input, TF> Recognizer<'input> for BaseLexer<'input, Input, TF>
-where
-    Input: CharStream<TF::From>,
-    TF: TokenFactory<'input>,
-{
-    fn get_node(&self) -> &NodeImpl<'input> {
-        &self.tree
-    }
 
-    /// Returns array of rule names.
-    /// Used for debugging and error reporting
-    fn get_rule_names(&self) -> &[&str] {
-        self.rule_names
-    }
-    fn get_vocabulary(&self) -> &dyn Vocabulary {
-        &self.vocabulary
-    }
-
-    /// Name of the file this recognizer was generated from
-    fn get_grammar_file_name(&self) -> &str {
-        self.grammar_file_name
-    }
-    fn get_atn(&self) -> &ATN {
-        &self.atn
-    }
-}
 
 /// Default lexer mode id
 pub const LEXER_DEFAULT_MODE: usize = 0;
@@ -277,7 +263,7 @@ where
     }
 
     /// Creates new lexer instance
-    pub fn new_base_lexer(
+    pub fn new(
         grammar_file_name: &'static str,
         rule_names: &'static [&'static str],
         channel_names: &'static [&'static str],
@@ -286,40 +272,25 @@ where
         serialized_atn: &'static [&'static str],
         input: Input,
         interpreter: LexerATNSimulator,
-        //recog: T,
         factory: &'input TF,
     ) -> Self {
-        let atn = ATNDeserializer::new(None).deserialize(serialized_atn.chars());
+        let mut recognizer = RecognizerImpl::new(grammar_file_name,rule_names,channel_names,mode_names,vocabulary,serialized_atn);
+        recognizer.set_input_stream( input );
+        recognizer.set_interpreter(Some(interpreter));
+        recognizer.set_token_factory( Some(factory) );
+        let atn = recognizer.get_atn();
         let mut dfa: Vec<RwLock<DFA>> = Vec::new();
         let size = atn.decision_to_state.len();
         for i in 0..size {
             dfa.push(RwLock::new(
-                DFA::new(atn.clone(), atn.get_decision_state(i), i as isize).into(),
+                DFA::new( atn.clone(), atn.get_decision_state(i), i as isize).into(),
             ))
         }
         let mut lexer = BaseLexer {
-            grammar_file_name,
-            rule_names,
-            channel_names,
-            mode_names,
-            vocabulary,
-            serialized_atn,
-            interpreter: Some(Box::new(interpreter)),
-            input: Some(input),
-            //recog,
-            factory,
+            recognizer,
             tree: NodeImpl::new(NodeType::Empty, None),
-            error_listeners: RefCell::new(vec![Box::new(ConsoleErrorListener {})]),
-            lexer_state: LexerState {
-                token_type: super::token::TOKEN_INVALID_TYPE,
-                text: None,
-                channel: super::token::TOKEN_DEFAULT_CHANNEL,
-                start_char_index: 0,
-                stop_char_index: 0,
-                start_column: 0,
-                start_line: 0,
-                start_char_pos_in_line: 0,
-            },
+//            error_listeners: RefCell::new(vec![Box::new(ConsoleErrorListener {})]),
+            lexer_state: LexerState::new(),
             current_pos: Rc::new(LexerPosition {
                 line: Cell::new(1),
                 char_position_in_line: Cell::new(0),
@@ -329,8 +300,7 @@ where
             hit_eof: false,
             //            token_factory_source_pair: None,
             mode_stack: Vec::new(),
-            mode: self::LEXER_DEFAULT_MODE,
-            atn: Arc::new(atn),
+            mode: LEXER_DEFAULT_MODE,
             decision_to_DFA: Arc::new(dfa),
         };
         let pos = lexer.current_pos.clone();
@@ -338,18 +308,105 @@ where
         lexer
     }
 }
-/*
-static ref _ATN: Arc<ATN> =
-        Arc::new(ATNDeserializer::new(None).deserialize(_serializedATN.chars()));
-    static ref _decision_to_DFA: Arc<Vec<antlr_rust::RwLock<DFA>>> = {
-        let mut dfa = Vec::new();
-        let size = _ATN.decision_to_state.len();
-        for i in 0..size {
-            dfa.push(DFA::new(_ATN.clone(), _ATN.get_decision_state(i), i as isize).into())
-        }
-        Arc::new(dfa)
-    };
- */
+
+impl<'input, Input, TF> Recognizer for BaseLexer<'input, Input, TF> {
+    fn get_rule_names(&self) -> &[&str] {
+        self.recognizer.get_rule_names()
+    }
+
+    fn get_vocabulary(&self) -> &VocabularyImpl {
+        self.recognizer.get_vocabulary()
+    }
+
+    fn get_token_type_map(&self) -> &HashMap<&str, isize> {
+        self.recognizer.get_token_type_map()
+    }
+
+    fn get_rule_index_map(&self) -> &HashMap<&str, usize> {
+        self.recognizer.get_rule_index_map()
+    }
+
+    fn get_token_type(&self, token_name: &str) -> isize {
+        self.recognizer.get_token_type( token_name )
+    }
+
+    fn get_serialized_atn(&self) -> &str {
+        self.recognizer.get_serialize_atn()
+    }
+
+    fn get_grammar_file_name(&self) -> &str {
+        self.recognizer.get_grammar_file_name()
+    }
+
+    fn get_atn(&self) -> &ATN {
+        self.recognizer.get_atn()
+    }
+
+    fn get_interpreter(&self) -> &LexerATNSimulator {
+        self.recognizer.get_interpreter()
+    }
+
+    fn get_parse_info(&self) -> Option<dyn ParseInfo> {
+        self.recognizer.get_parse_info()
+    }
+
+    fn set_interpreter(&mut self, interpreter: LexerATNSimulator) {
+        self.recognizer.set_interpreter(interpreter)
+    }
+
+    fn get_error_header(&self, err: BaseRecognitionError) -> String {
+        self.recognizer.get_error_header(err)
+    }
+
+    fn add_error_listener(&mut self, listener: Box<dyn ErrorListener<'input, dyn Lexer<'input>>>) {
+        self.recognizer.add_error_listener( listener )
+    }
+
+    fn get_error_listeners(&self) -> Vec<Box<dyn ErrorListener<'input, dyn Lexer<'input>>>> {
+        self.recognizer.get_error_listeners()
+    }
+
+    fn sempred(&mut self, local_ctxt: Box<dyn RuleContext>, rule_index: isize, action_index: isize) -> bool {
+        self.recognizer.sempred(local_ctxt, rule_index,action_index)
+    }
+
+    fn precpred(&mut self, local_ctxt: Box<dyn RuleContext>, precedence: isize) -> bool {
+        self.recognizer.precpred(local_ctxt, precedence)
+
+    }
+
+    fn action(&mut self, local_ctxt: Box<dyn RuleContext>, rule_index: isize, action_index: isize) {
+        self.recognizer.action(local_ctxt, rule_index,action_index)
+    }
+
+    fn get_state(&self) -> isize {
+        self.recognizer.get_state()
+    }
+
+    fn set_state(&mut self, state: isize) {
+        self.recognizer.set_state(state)
+    }
+
+    fn get_input_stream(&self) -> Option<IntStream> {
+        self.recognizer.get_input_stream()
+    }
+
+    fn set_input_stream(&self, input: Option<IntStream>) {
+        self.recognizer.set_input_stream(input)
+    }
+
+    fn get_token_factory(&self) -> Option<TokenFactory> {
+        self.recognizer.get_token_factory()
+    }
+
+    fn set_token_factory(&self, factory: Option<TokenFactory>) {
+        self.recognizer.set_token_factory( factory )
+    }
+
+    fn reset(&mut self) {
+        self.recognizer.reset()
+    }
+}
 
 impl<'input, Input, TF> TokenAware<'input> for BaseLexer<'input, Input, TF>
 where
@@ -442,10 +499,7 @@ where
     }
 
     fn get_input_stream(&mut self) -> Option<&mut dyn IntStream> {
-        match &mut self.input {
-            None => None,
-            Some(x) => Some(x as _),
-        }
+        self.recognizer.get_input_stream()
     }
 
     fn get_source_name(&self) -> String {
@@ -497,11 +551,10 @@ fn notify_listeners<'input, T, Input, TF>(
 }
 
 impl<'input, Input, TF> Lexer<'input> for BaseLexer<'input, Input, TF>
-where
-    Input: CharStream<TF::From>,
-    TF: TokenFactory<'input>,
-{
-    type Input = Input;
+    where Input: CharStream<TF::From>, TF: TokenFactory<'input> {
+
+
+    type Input = dyn CharStream<Cow<'input, str>>;
 
     fn input(&mut self) -> &mut Self::Input {
         self.input.as_mut().unwrap()
@@ -540,10 +593,30 @@ where
     }
 
     fn reset(&mut self) {
-        unimplemented!()
+        self.token = None;
+        self.hit_eof = false;
+        self.lexer_state = LexerState::new();
+        self.mode = LEXER_DEFAULT_MODE;
+        self.mode_stack.clear();
+        self.recognizer.reset();
     }
 
-    fn get_interpreter(&self) -> Option<&LexerATNSimulator> {
-        self.interpreter.as_deref()
+    fn get_interpreter(&self) -> &Option<ATNInterpreter> {
+        self.recognizer.get_interpreter()
     }
+
 }
+
+const LEXER_MIN_DFA_EDGE : usize = 0;
+const LEXER_MAX_DFA_EDGE : usize = 127;
+
+struct SimState {
+    index : usize,
+    line : usize,
+    char_pos : usize,
+    dfa_state : DFAState,
+}
+
+
+
+

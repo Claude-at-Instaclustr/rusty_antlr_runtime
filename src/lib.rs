@@ -83,6 +83,8 @@
 //! [`TokenStream`]: crate::token_stream::TokenStream
 //! [`ParserRuleContext`]: crate::parser_rule_context::ParserRuleContext
 
+extern crate bit_set;
+
 #[macro_use]
 extern crate lazy_static;
 

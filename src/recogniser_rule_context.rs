@@ -68,7 +68,7 @@ pub trait RecogniserRuleContext<'input>:
     // fn add_token_node(&self, token: TerminalNode<'input, Self::TF>) { }
     // fn add_error_node(&self, bad_token: ErrorNode<'input, Self::TF>) { }
 
-    fn add_child(&self, _child: Rc<<Self::Ctx as RecogniserNodeType<'input>>::Type>) {}
+    fn add_child(&self, _child: NodeImpl<'input>) {}
     fn remove_last_child(&self) {}
 
     // fn enter_rule(&self, listener: &mut dyn Any);
@@ -122,7 +122,6 @@ pub trait RuleContextExt<'input>: RecogniserRuleContext<'input> {
     where
         Z: RecogniserRuleContext<'input, Ctx = Self::Ctx, TF = Self::TF> + ?Sized + 'input,
         Self::Ctx: RecogniserNodeType<'input, Type = Z>,
-        Rc<Self>: CoerceUnsized<Rc<Z>>;
 
     #[doc(hidden)]
     fn accept_children<V>(&self, visitor: &mut V)
@@ -133,10 +132,18 @@ pub trait RuleContextExt<'input>: RecogniserRuleContext<'input> {
 
 impl<'input, T: RecogniserRuleContext<'input> + ?Sized + 'input> RuleContextExt<'input> for T {
     fn to_string<Z>(self: &Rc<Self>, rule_names: Option<&[&str]>, stop: Option<Rc<Z>>) -> String
+        where Z: RecogniserRuleContext<'input, Ctx=Self::Ctx, TF=Self::TF> + ?Sized + 'input, Self::Ctx: RecogniserNodeType<'input, Type=Z> {
+        todo!()
+    }
+
+    fn accept_children<V>(&self, visitor: &mut V) where V: ParseTreeVisitor<'input, Self::Ctx> + ?Sized, <Self::Ctx as RecogniserNodeType<'input>>::Type: VisitableDyn<V> {
+        todo!()
+    }
+    /*
+    fn to_string<Z>(self: &Rc<Self>, rule_names: Option<&[&str]>, stop: Option<Rc<Z>>) -> String
     where
         Z: RecogniserRuleContext<'input, Ctx = T::Ctx, TF = T::TF> + ?Sized + 'input,
         T::Ctx: RecogniserNodeType<'input, Type = Z>,
-        Rc<T>: CoerceUnsized<Rc<Z>>,
     {
         let mut result = String::from("[");
         let mut next: Option<Rc<Z>> = Some(self.clone() as Rc<Z>);
@@ -179,6 +186,8 @@ impl<'input, T: RecogniserRuleContext<'input> + ?Sized + 'input> RuleContextExt<
         self.get_children()
             .for_each(|child| child.accept_dyn(visitor))
     }
+    */
+
 }
 
 #[inline]
